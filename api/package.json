@@ -1,0 +1,8 @@
+{
+  "name": "td-calculator-api",
+  "version": "1.0.0",
+  "description": "TrustDigital MS Licensing Calculator API",
+  "engines": {
+    "node": ">=18"
+  }
+}
