@@ -1,0 +1,2318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TrustDigital · Microsoft Licensing Intelligence</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a}
+#err{display:none;position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;padding:12px 20px;font-family:monospace;font-size:13px;z-index:9999;white-space:pre-wrap}
+#loading{position:fixed;top:0;left:0;right:0;bottom:0;background:#0a0a0a;display:flex;align-items:center;justify-content:center;color:#64ffda;font-family:system-ui;font-size:16px;z-index:100}
+@keyframes qInR{from{transform:translateX(52px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes qInL{from{transform:translateX(-52px);opacity:0}to{transform:translateX(0);opacity:1}}
+.q-r{animation:qInR .34s cubic-bezier(.22,1,.36,1) both}
+.q-l{animation:qInL .34s cubic-bezier(.22,1,.36,1) both}
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="loading">Loading…</div>
+<div id="root"></div>
+<script>window.onerror=function(m,s,l,c,e){var d=document.getElementById("err");d.style.display="block";d.textContent=(e&&e.stack)||m;};</script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect } = React;
+
+const WEBHOOK_URL = "/api/send-report";
+const TD_LOGO_URL = "https://images.squarespace-cdn.com/content/661700cd3e692d096f5c84fd/39f1a84b-10d7-433e-8ca0-c3ddcf88bc39/Untitled+design+%289%29.png?content-type=image%2Fpng";
+const MS_BADGE_URL = "https://images.squarespace-cdn.com/content/661700cd3e692d096f5c84fd/0a73a783-5b02-4ba2-ae01-a62abb0b6834/Modern+Work+Logo.png?content-type=image%2Fpng";
+
+const C = {
+  bg:"#0A192F", bgCard:"#162844", bgDeep:"#0D2040",
+  border:"#2A4468", borderBright:"#3A5A80",
+  navyBrand:"#1B3564", blueBrand:"#5B93C7",
+  teal:"#64FFDA", tealDim:"#2DD4BF", tealBg:"rgba(100,255,218,0.08)",
+  blue:"#7BC8FF",
+  textPrimary:"#F0F7FF", textSecondary:"#B8CDE4", textMuted:"#7A9BBF",
+  green:"#4ADE80", red:"#FC8181", yellow:"#FCD34D",
+  orange:"#FB923C", purple:"#C4B5FD",
+};
+
+function copyToClipboard(text) {
+  const fallback = function(t) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = t; ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand("copy"); document.body.removeChild(ta);
+      return Promise.resolve(ok);
+    } catch(e) { return Promise.resolve(false); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    return navigator.clipboard.writeText(text).then(function(){return true;}).catch(function(){return fallback(text);});
+  return fallback(text);
+}
+
+const BLOCKED_DOMAINS = new Set([
+  "gmail.com","yahoo.com","hotmail.com","outlook.com","icloud.com","aol.com",
+  "mail.com","protonmail.com","live.com","msn.com","ymail.com","googlemail.com",
+  "me.com","mac.com","inbox.com","zoho.com","fastmail.com","pm.me","hey.com",
+  "tutanota.com","gmx.com","gmx.net","qq.com","163.com","126.com",
+]);
+
+const sanitize = function(v) {
+  return String(v).replace(/<[^>]*>/g,"").replace(/javascript:/gi,"").replace(/on\w+\s*=/gi,"").replace(/[<>'"`;]/g,"").slice(0,500);
+};
+
+function validateEmail(email) {
+  const lower = email.toLowerCase().trim();
+  const rx = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+  if (!rx.test(lower)) return {ok:false, msg:"Please enter a valid email address."};
+  const domain = lower.split("@")[1];
+  if (BLOCKED_DOMAINS.has(domain)) return {ok:false, msg:"Please use your work email. Personal addresses are not accepted."};
+  return {ok:true, domain};
+}
+
+async function checkDomainMX(domain) {
+  try {
+    const r = await fetch("https://dns.google/resolve?name="+encodeURIComponent(domain)+"&type=MX",{signal:AbortSignal.timeout(4000)});
+    const d = await r.json();
+    return d.Status===0 && d.Answer && d.Answer.length>0;
+  } catch(e) { return true; }
+}
+
+const FEATURE_GROUPS = [
+  { group:"Security", icon:"🛡️", features:[
+    {id:"endpoint_security", label:"Endpoint Security (Defender for Endpoint)", desc:"Antivirus, ransomware protection, and device health across Windows, Mac, iOS, Android.", comp:"Comparable to: Symantec, McAfee, Malwarebytes"},
+    {id:"advanced_edr",      label:"Advanced EDR & Threat Hunting",             desc:"Automated attack investigation, live incident response, cross-device threat hunting. Requires Defender for Endpoint P2 (E5).", comp:"Comparable to: CrowdStrike Falcon, SentinelOne"},
+    {id:"defender_xdr",      label:"Unified Security Operations (XDR)",         desc:"Single dashboard across endpoints, email, identity, and cloud apps. AI-driven automation.", comp:"Comparable to: Palo Alto Cortex XDR, Rapid7"},
+    {id:"pim",               label:"Privileged Identity Management (PIM)",       desc:"Just-in-time admin access with approval workflows. Reduces standing admin exposure. Requires Entra ID P2 (E5).", comp:"Comparable to: CyberArk, BeyondTrust (partial)"},
+  ]},
+  { group:"Compliance & Legal", icon:"📋", features:[
+    {id:"compliance_basic",  label:"Audit Logs & Retention",           desc:"Full audit history, retention policies for email and files, and compliance reporting dashboard."},
+    {id:"dlp",               label:"Data Loss Prevention (DLP)",       desc:"Block accidental sharing of sensitive data (SSNs, card numbers, confidential files). E3 covers email and files; Teams/Endpoint DLP requires E5.", comp:"Comparable to: Forcepoint DLP, Symantec DLP"},
+    {id:"ediscovery",        label:"Legal Hold & eDiscovery",          desc:"Freeze and search all M365 content for legal proceedings. Export-ready.", comp:"Comparable to: Relativity, Nuix (partial)"},
+    {id:"purview_full",      label:"Full Compliance Suite (Purview)",  desc:"Insider risk detection, communication compliance, advanced sensitivity labels, information barriers.", comp:"Comparable to: Proofpoint, Varonis (partial)"},
+  ]},
+  { group:"Devices & Identity", icon:"💻", features:[
+    {id:"device_mgmt",       label:"Device & Mobile Management (Intune)", desc:"Enroll and manage all devices from one console. BYOD-friendly—no full wipe required. Policy-based compliance.", comp:"Comparable to: Jamf (partial), VMware Workspace ONE, SOTI"},
+    {id:"windows_ent",       label:"Windows 11 Enterprise",               desc:"Required for Autopilot provisioning, Azure Virtual Desktop, DirectAccess, and AppLocker app control."},
+  ]},
+  { group:"Productivity & AI", icon:"⚡", features:[
+    {id:"teams_phone",       label:"Teams Phone (PBX Replacement)",    desc:"Replace your business phone system with Teams. Direct Routing or Operator Connect for external calls.", comp:"Comparable to: RingCentral, 8x8, Cisco CUCM"},
+    {id:"power_bi",          label:"Power BI Pro",                     desc:"Interactive dashboards and reports across all your data sources. Also available standalone at $14/user/mo.", comp:"Comparable to: Tableau, Qlik Sense"},
+    {id:"copilot",           label:"Microsoft 365 Copilot (AI Assistant)", desc:"AI built into Word, Excel, PowerPoint, Teams, and Outlook. $21/user/mo (Business, ≤300 seats) or $30/user/mo (Enterprise). Sensitivity labels and Intune compliance—already in your M365 plan—are the only prereqs.", comp:"Comparable to: Google Workspace AI, Notion AI"},
+  ]},
+];
+const ALL_FEATURES = FEATURE_GROUPS.flatMap(function(g){return g.features;});
+
+const SKUS = {
+  bp:{
+    id:"bp", displayName:"Microsoft 365 Business Premium", shortName:"Business Premium",
+    monthly_annual:22, monthly_m2m:26.40, color:C.blue, tier:1,
+    coversFeatures:["endpoint_security","device_mgmt"],
+    gotchas:["Hard cap of 300 users. Organizations over 300 must move to E3 or E5.","Windows 11 Pro upgrade included. Azure Virtual Desktop included. No AppLocker or DirectAccess (requires E3+).","DLP covers email and files (SharePoint/OneDrive). Teams chat DLP requires E3 or above.","No Defender for Endpoint P2. Advanced threat hunting and live response require E5."],
+    upgradeNote:null,
+  },
+  e3:{
+    id:"e3", displayName:"Microsoft 365 E3", shortName:"M365 E3",
+    monthly_annual:36, monthly_m2m:43.20, color:C.teal, tier:2,
+    coversFeatures:["endpoint_security","device_mgmt","compliance_basic","dlp","ediscovery","windows_ent"],
+    gotchas:["Includes Defender for Endpoint Plan 1. Advanced EDR (P2) with live response, threat hunting, and vulnerability management requires E5.","DLP covers email and files only. Teams chat DLP and Endpoint DLP require E5.","eDiscovery Standard only. Premium analytics and case management require E5.","No Entra ID P2. PIM requires a separate add-on or E5."],
+    upgradeNote:"E3 is $14 more per seat/mo than Business Premium. Key additions: Windows 11 Enterprise, full multi-platform DLP, eDiscovery Standard. Required for organizations over 300 users or with active compliance needs.",
+  },
+  e5:{
+    id:"e5", displayName:"Microsoft 365 E5", shortName:"M365 E5",
+    monthly_annual:57, monthly_m2m:68.40, color:C.purple, tier:3,
+    coversFeatures:["endpoint_security","device_mgmt","compliance_basic","dlp","ediscovery","windows_ent","advanced_edr","purview_full","pim","teams_phone","power_bi","defender_xdr"],
+    gotchas:["Microsoft Sentinel is not included. Billed separately through Azure.","External calling requires a separate Calling Plan regardless of E5.","Confirm E5-only features are genuinely required before committing to the cost delta.","Microsoft 365 E7 (The Frontier Suite) launches May 1, 2026—bundles E5 + Copilot + Entra Suite + Agent 365. If evaluating E5 + Copilot together, compare E7 pricing before committing."],
+    upgradeNote:"E5 is $21 more per seat/mo than E3. Key additions: Defender for Endpoint P2, Entra ID P2 and PIM, Purview Premium, Teams Phone, Power BI Pro. Note: Microsoft 365 E7 (available May 1, 2026) bundles E5 + Copilot + Entra Suite + Agent 365—worth evaluating if Copilot is in scope.",
+  },
+};
+
+const E5_ONLY = new Set(["advanced_edr","purview_full","pim","teams_phone","defender_xdr"]);
+const E3_PLUS = new Set(["compliance_basic","dlp","ediscovery","windows_ent"]);
+
+function determineLicensing(selectedFeatures, seats) {
+  const sf = selectedFeatures || [];
+  const nonCop = sf.filter(function(f){return f!=="copilot";});
+  const hasCop = sf.includes("copilot");
+  let base = "bp";
+  if (nonCop.some(function(f){return E5_ONLY.has(f);})) base="e5";
+  else if (nonCop.some(function(f){return E3_PLUS.has(f);})) base="e3";
+  const bpCapExceeded = base==="bp" && (Number(seats)||0) > 300;
+  if (bpCapExceeded) base = "e3";
+  const driverFeatures = nonCop.filter(function(f){
+    if(base==="e5") return E5_ONLY.has(f);
+    if(base==="e3") return E3_PLUS.has(f);
+    return SKUS.bp.coversFeatures.includes(f);
+  });
+  const bonusFeatures = SKUS[base].coversFeatures.filter(function(f){return !sf.includes(f);});
+  return {base, hasCop, driverFeatures, bonusFeatures, bpCapExceeded};
+}
+
+const TENURE_MAP = {lt6:4, "6mo":6, "12mo":12, "24mo":24};
+const tenureMonths = function(t) { return TENURE_MAP[t] || 12; };
+const BREAKEVEN_MONTHS = 10;
+
+function calcPayment(seats, turnoverPct, avgTenure, sku) {
+  const rate    = Math.max(0, Math.min(1, (Number(turnoverPct)||0) / 100));
+  const tenure  = tenureMonths(avgTenure);
+  const churned = Math.round(seats * rate);
+  const allAnnual = seats * sku.monthly_annual * 12;
+  const ghostMonths = Math.max(0, 12 - tenure);
+  const ghostWaste  = churned * sku.monthly_annual * ghostMonths;
+  const m2mMakesFinancialSense = tenure < BREAKEVEN_MONTHS;
+  const recommendedM2m = m2mMakesFinancialSense ? Math.min(churned, Math.floor(seats * 0.45)) : 0;
+  const hybridAnnualSeats = seats - recommendedM2m;
+  const hybridCost = (hybridAnnualSeats * sku.monthly_annual * 12) + (recommendedM2m * sku.monthly_m2m * tenure);
+  const optimalCost = Math.min(allAnnual, hybridCost);
+  const netSavings  = Math.max(0, allAnnual - optimalCost);
+  const recommendation = (m2mMakesFinancialSense && recommendedM2m > 0) ? "hybrid" : "annual";
+  return {
+    allAnnual, hybridCost: m2mMakesFinancialSense ? hybridCost : allAnnual,
+    optimalCost, netSavings, recommendation,
+    recommendedM2m, recommendedAnnual: seats - recommendedM2m,
+    annualPct: seats > 0 ? Math.round(((seats - recommendedM2m)/seats)*100) : 100,
+    m2mPct:    seats > 0 ? Math.round((recommendedM2m/seats)*100) : 0,
+    ghostWaste, ghostMonths, tenure, churned, m2mMakesFinancialSense,
+  };
+}
+
+function paymentVerdict(turnoverPct, avgTenure) {
+  const tenure = tenureMonths(avgTenure);
+  const t = Number(turnoverPct)||0;
+  if (tenure >= BREAKEVEN_MONTHS) {
+    const addl = t > 25 ? " High turnover rate, but each leaver is still using their seat through nearly the full commitment window. If tenure ever shortens below 10 months, that’s when hybrid starts winning." : "";
+    return {verdict:"Annual for all seats",color:C.green,short:"Leavers average "+tenure+" months—past the 10-month break-even. Annual is the cheaper structure even with frequent churn."+addl,badge:"Annual wins"};
+  }
+  if (t <= 5)  return {verdict:"Annual for all seats",color:C.green,short:"Very low turnover. Ghost waste is minimal. Annual commitment maximizes per-seat savings.",badge:"Annual wins"};
+  if (t <= 13) return {verdict:"Mostly Annual / small M2M buffer",color:C.green,short:"Low turnover with short tenure. A small M2M buffer on the most at-risk seats eliminates ghost waste without giving up the annual discount on stable headcount.",badge:"Hybrid recommended"};
+  if (t <= 19) return {verdict:"Hybrid — Annual + M2M on churn-risk seats",color:C.teal,short:"At this attrition rate with short avg tenure, moving churning seats to M2M pays for itself. The M2M premium is smaller than the ghost waste you would otherwise carry.",badge:"Hybrid recommended"};
+  if (t <= 35) return {verdict:"Hybrid — significant M2M portion",color:C.yellow,short:"High turnover and short tenure make a large M2M allocation the right call. Pre-paying annual on these seats guarantees waste.",badge:"Hybrid recommended"};
+  if (t <= 55) return {verdict:"Majority M2M",color:C.orange,short:"Extreme churn with short tenure. The ghost waste on all-annual would far exceed the M2M premium. Most seats should be month-to-month.",badge:"Mostly M2M"};
+  return {verdict:"All Month-to-Month",color:C.red,short:"At this churn rate and tenure, annual licensing is not financially defensible for any seat.",badge:"All M2M"};
+}
+
+function calcProfile(p) {
+  const lic     = determineLicensing(p.selectedFeatures, p.seats);
+  const sku     = SKUS[lic.base];
+  const seats   = Math.max(0, Number(p.seats)||0);
+  const growth  = Math.max(0, Number(p.growth)||0);
+  const copSeats = lic.hasCop ? Math.max(0, Number(p.copilotSeats)||0) : 0;
+  const copMonthly = lic.base === "bp" ? 21 : 30;
+  const copCost  = copSeats * copMonthly * 12;
+  const pay     = calcPayment(seats, p.turnoverPct, p.avgTenure, sku);
+  const growthCost = (growth * sku.monthly_m2m * 3) + (growth * sku.monthly_annual * 9);
+  const totalOptimal   = pay.optimalCost  + growthCost + copCost;
+  const totalAllAnnual = pay.allAnnual    + (growth * sku.monthly_annual * 12) + copCost;
+  const netSavings     = Math.max(0, totalAllAnnual - totalOptimal);
+  return { lic, sku, seats, growth, copSeats, hasCop:lic.hasCop, pay, totalOptimal, totalAllAnnual, netSavings, copCost, copMonthly };
+}
+
+const fmt     = function(v) { return "$" + Math.abs(Math.round(v)).toLocaleString(); };
+const fmtK    = function(v) { return v >= 10000 ? "$" + (v/1000).toFixed(1) + "K" : fmt(v); };
+const fmtRate = function(v) { return Number.isInteger(v) ? "$"+v : "$"+v.toFixed(2); };
+const uid  = function() { return Math.random().toString(36).slice(2,8); };
+const COLORS = [C.teal, C.blue, C.purple, C.orange, C.yellow, C.green];
+
+const JULY_2026_PRICES = {
+  bp: { monthly_annual: 22,   monthly_m2m: 26.40 },  // no change
+  e3: { monthly_annual: 39,   monthly_m2m: 46.80 },  // $36 → $39 (+8%)
+  e5: { monthly_annual: 60,   monthly_m2m: 72.00 },  // $57 → $60 (+5%)
+};
+
+function buildReportText(contact, profiles, pResults) {
+  if (!pResults) return "";
+  const con = pResults.consolidated;
+  const dt  = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const lines = [
+    "MICROSOFT LICENSING INTELLIGENCE REPORT",
+    "Prepared by TrustDigital",
+    "Microsoft Solutions Partner · Modern Work Specialization",
+    "=".repeat(54), "",
+    "Company:  " + (contact.company||"[Company]"),
+    "Contact:  " + (contact.name||"[Name]") + (contact.title ? ", "+contact.title : ""),
+    "Date:     " + dt,
+    "Web:      trustdigital.net", "",
+    "=".repeat(54), "EXECUTIVE SUMMARY", "=".repeat(54),
+    "Groups analyzed:       " + profiles.length,
+    "Total seats:           " + con.totalSeats,
+    "All-annual cost (est): " + fmt(con.totalAllAnnual) + "/yr",
+    "Optimized cost (est):  " + fmt(con.totalOptimal)   + "/yr",
+    "Annual savings (est):  " + fmtK(con.totalSavings)  + "/yr",
+    "3-year savings:        " + fmtK(con.totalSavings * 3), "",
+    "-".repeat(54), "HOW THE SAVINGS WORK", "-".repeat(54),
+    "Annual commits save ~20% per seat vs. month-to-month but only",
+    "when the seat stays filled. Ghost licensing waste occurs when",
+    "an employee on an annual commit leaves before the year ends.",
+    "M2M saves money when avg leaver tenure is under 10 months.",
+    "Above 10 months, annual is always cheaper. This report only",
+    "recommends M2M where it genuinely saves money.", "",
+    "=".repeat(54), "GROUP-BY-GROUP RECOMMENDATIONS", "=".repeat(54),
+  ];
+  pResults.profiles.forEach(function(r, i) {
+    const p  = profiles[i];
+    const pay = r.pay;
+    const pv  = paymentVerdict(p.turnoverPct, p.avgTenure);
+    const driverLines = r.lic.driverFeatures.length > 0
+      ? r.lic.driverFeatures.map(function(f){ return "  * " + (ALL_FEATURES.find(function(x){return x.id===f;})||{label:f}).label; }).join("\n")
+      : "  All selected capabilities are covered by " + r.sku.shortName + ".";
+    const bonusLines = r.lic.bonusFeatures.length > 0
+      ? "\nAlso included in your " + r.sku.shortName + " license:\n" +
+        r.lic.bonusFeatures.map(function(f){
+          var feat = ALL_FEATURES.find(function(x){return x.id===f;})||{label:f};
+          var doc = FEATURE_DOCS[f];
+          return "  * " + feat.label + (doc ? "\n    Learn more: " + doc.url : "");
+        }).join("\n")
+      : "";
+    const structLine = pay.recommendation === "hybrid"
+      ? pay.recommendedAnnual + " annual seats, " + pay.recommendedM2m + " M2M seats"
+      : "All " + r.seats + " seats on annual";
+    lines.push("", (i+1)+". "+p.icon+" "+p.name.toUpperCase(), "-".repeat(44),
+      "Seats: "+r.seats+"  |  Attrition: "+p.turnoverPct+"%  |  Avg leaver tenure: "+pay.tenure+" months",
+      "", "RECOMMENDED LICENSE: "+r.sku.displayName,
+      "  Annual: "+fmtRate(r.sku.monthly_annual)+"/seat/mo  |  M2M: "+fmtRate(r.sku.monthly_m2m)+"/seat/mo"+(r.hasCop&&r.copSeats>0?" | Copilot: $"+r.copMonthly+"/seat/mo ("+r.copSeats+" seats)":""),
+      "", "WHY "+r.sku.shortName.toUpperCase()+":", driverLines, bonusLines,
+      "", "PAYMENT STRUCTURE: "+pv.verdict,
+      "  "+structLine, "  "+pv.short,
+      "", "FINANCIALS:",
+      "  All-annual cost:  "+fmtK(r.totalAllAnnual)+"/yr",
+      "  Optimized cost:   "+fmtK(r.totalOptimal)+"/yr",
+      "  Savings:          "+fmtK(r.netSavings)+"/yr"
+    );
+  });
+  lines.push(
+    "", "=".repeat(54), "CONSOLIDATED TOTALS", "=".repeat(54),
+    "All-annual cost/yr:  " + fmtK(con.totalAllAnnual),
+    "Optimized cost/yr:   " + fmtK(con.totalOptimal),
+    "Net savings/yr:      " + fmtK(con.totalSavings),
+    "3-year savings:      " + fmtK(con.totalSavings * 3),
+    "", "=".repeat(54), "WHY TRUSTDIGITAL", "=".repeat(54),
+    "Microsoft Solutions Partner, Modern Work Specialization",
+    "Top 1% of Microsoft partners globally", "",
+    "  * Validate estimates against your live Entra ID data",
+    "  * Negotiate your CSP renewal at better than list price",
+    "  * Manage your Annual/M2M split on an ongoing basis",
+    "  * Priority Partner Support with direct Microsoft escalation",
+    "  * Quarterly licensing reviews",
+    "  * Copilot and AI readiness review included", "",
+    "Schedule your free Microsoft Licensing Audit: trustdigital.net", "",
+    "Pricing reflects Microsoft 365 CSP/MSRP rates. Actual pricing varies by agreement.",
+    "© " + new Date().getFullYear() + " TrustDigital"
+  );
+  return lines.join("\n");
+}
+
+function buildHRText(contact, profiles) {
+  const dt = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const groupLines = profiles.map(function(p,i) {
+    return "\nGroup "+(i+1)+": "+p.name+" ("+p.seats+" seats)" +
+      "\n  Annual turnover rate:       "+p.turnoverPct+"%   -> Actual: ___________" +
+      "\n  Avg tenure of leavers (mo): "+tenureMonths(p.avgTenure)+"          -> Actual: ___________" +
+      "\n  Expected new hires (12 mo): "+p.growth+"          -> Actual: ___________";
+  }).join("\n");
+  return [
+    "Subject: Microsoft Licensing Data Request (15 min)",
+    "To: Human Resources",
+    "From: "+(contact.name||"IT Department")+(contact.title?", "+contact.title:""),
+    "Date: "+dt, "",
+    "We are finalizing a Microsoft 365 licensing review and need to verify",
+    "a few workforce numbers. Please confirm or correct the estimates below.", "",
+    "GROUP ESTIMATES:", groupLines, "",
+    "OFFBOARDING PROCESS:",
+    "  Days between last day and IT receiving notice:  _____ days",
+    "  Who initiates the IT notification when someone leaves?  HR / Manager / Automated / Other: ___________",
+    "  Are any groups above contractors or temps?  ___________", "",
+    "Reply to: "+(contact.name||"[Name]")+" | "+(contact.email||"[email]")+" | "+(contact.company||"[Company]"),
+  ].join("\n");
+}
+
+const el = React.createElement;
+
+function Card(props) {
+  return el("div",{style:Object.assign({background:C.bgCard,border:"1px solid "+C.border,borderRadius:10,padding:18},props.style||{})},props.children);
+}
+function SLabel(props) {
+  return el("div",{style:Object.assign({color:props.color||C.textSecondary,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5},props.style||{})},props.children);
+}
+function MSBadge(props) {
+  if(props.compact) return el("div",{style:{display:"inline-flex",alignItems:"center",background:"rgba(255,255,255,0.92)",borderRadius:5,padding:"4px 8px"}},
+    el("img",{src:MS_BADGE_URL,alt:"Microsoft Modern Work Solutions Partner",style:{height:28,width:"auto",maxWidth:140,objectFit:"contain",display:"block"}})
+  );
+  return el("div",{style:{background:"#fff",borderRadius:8,padding:"10px 14px",display:"inline-flex",border:"1px solid rgba(0,0,0,0.08)"}},
+    el("img",{src:MS_BADGE_URL,alt:"Microsoft Modern Work Solutions Partner",style:{height:44,width:"auto",maxWidth:200,objectFit:"contain",display:"block"}})
+  );
+}
+function TDLogo(props) {
+  const h = Math.round(32*(props.size||1));
+  return el("div",{style:{display:"inline-flex",alignItems:"center",padding:"2px 0"}},
+    el("img",{src:TD_LOGO_URL,alt:"TrustDigital",style:{height:h,width:"auto",maxWidth:160,objectFit:"contain",display:"block"}})
+  );
+}
+function Btn(props) {
+  const vs = {
+    primary:{background:"linear-gradient(135deg,"+C.navyBrand+","+C.blueBrand+")",color:"#fff",border:"none"},
+    teal:{background:"linear-gradient(135deg,"+C.tealDim+","+C.blue+")",color:C.bgDeep,border:"none"},
+    ghost:{background:"transparent",color:C.textSecondary,border:"1px solid "+C.border},
+  };
+  const v = vs[props.variant||"primary"] || vs.primary;
+  return el("button",{onClick:props.onClick,disabled:props.disabled,style:Object.assign({padding:"10px 20px",borderRadius:8,fontWeight:700,fontSize:13,cursor:props.disabled?"not-allowed":"pointer",transition:"all .2s",opacity:props.disabled?.45:1},v,props.style||{})},props.children);
+}
+function ProgBar(props) {
+  if(props.pct !== undefined) {
+    return el("div",{style:{marginBottom:20}},
+      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}},
+        el("span",{style:{color:C.teal,fontSize:14,fontWeight:800}},props.pct+"% complete"),
+        props.label ? el("span",{style:{color:C.textMuted,fontSize:11}},props.label) : null
+      ),
+      el("div",{style:{height:5,background:C.border,borderRadius:99,overflow:"hidden"}},
+        el("div",{style:{height:"100%",width:props.pct+"%",background:"linear-gradient(90deg,"+C.tealDim+","+C.teal+")",borderRadius:99,transition:"width .5s ease"}})
+      )
+    );
+  }
+  return el("div",{style:{display:"flex",alignItems:"center",gap:5,marginBottom:24}},
+    Array.from({length:props.total},function(_,i){
+      return el("div",{key:i,style:{flex:1,height:3,borderRadius:99,background:i<props.step?C.teal:i===props.step?C.tealDim+"AA":C.border,transition:"all .4s"}});
+    }),
+    el("span",{style:{color:C.textSecondary,fontSize:11,marginLeft:6}},"Step "+(props.step+1)+" of "+props.total)
+  );
+}
+function Inp(props) {
+  const [f,setF] = useState(false);
+  return el("div",{style:{marginBottom:14}},
+    props.label && el("div",{style:{color:C.textSecondary,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}},props.label),
+    el("input",{type:props.type||"text",value:props.value,placeholder:props.placeholder,
+      onChange:function(e){props.onChange(props.type==="number"?e.target.value:sanitize(e.target.value));},
+      onFocus:function(){setF(true);},onBlur:function(){setF(false);},
+      style:Object.assign({width:"100%",boxSizing:"border-box",background:C.bgDeep,border:"1px solid "+(props.error?C.red:f?C.teal:C.border),borderRadius:8,padding:"10px 14px",color:C.textPrimary,fontSize:14,outline:"none"},props.style||{})}),
+    props.note&&!props.error&&el("div",{style:{color:C.textMuted,fontSize:10,marginTop:3}},props.note),
+    props.error&&el("div",{style:{color:C.red,fontSize:11,marginTop:3}},"⚠ "+props.error)
+  );
+}
+function Sel(props) {
+  return el("div",{style:{marginBottom:14}},
+    props.label && el("div",{style:{color:C.textSecondary,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}},props.label),
+    el("select",{value:props.value,onChange:function(e){props.onChange(e.target.value);},style:{width:"100%",background:C.bgDeep,border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px",color:C.textPrimary,fontSize:14,outline:"none"}},
+      props.options.map(function(o){return el("option",{key:o.value,value:o.value},o.label);})
+    )
+  );
+}
+function CopyButton(props) {
+  const [state,setState] = useState("idle");
+  const handle = function() {
+    if(!props.text||props.text.length<5){setState("error");setTimeout(function(){setState("idle");},2500);return;}
+    copyToClipboard(props.text).then(function(ok){setState(ok?"copied":"error");setTimeout(function(){setState("idle");},2500);});
+  };
+  const color  = state==="copied"?C.green:state==="error"?C.orange:C.textSecondary;
+  const border = state==="copied"?"1px solid "+C.green:state==="error"?"1px solid "+C.orange:"1px solid "+C.border;
+  return el("button",{onClick:handle,style:Object.assign({background:"transparent",color,border,borderRadius:7,padding:"7px 14px",fontWeight:700,fontSize:11,cursor:"pointer",transition:"all .2s"},props.style||{})},
+    state==="copied"?"Copied!" : state==="error"?"Use Ctrl+A to select" : (props.label||"Copy")
+  );
+}
+function NavBar() {
+  return el("nav",{style:{background:"#0D1E38",borderBottom:"1px solid #1E3A5A",padding:"0 20px",position:"sticky",top:0,zIndex:100}},
+    el("div",{style:{maxWidth:1100,margin:"0 auto",display:"flex",alignItems:"center",height:54}},
+      el("a",{href:"https://www.trustdigital.net/",target:"_blank",rel:"noreferrer",style:{textDecoration:"none",display:"flex",alignItems:"center"}},
+        el(TDLogo,{size:0.85})
+      )
+    )
+  );
+}
+function PriceAlertBar() {
+  return el("div",{style:{background:"rgba(251,146,60,0.10)",borderBottom:"1px solid "+C.orange+"44",padding:"8px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
+    el("div",{style:{display:"flex",alignItems:"baseline",gap:8,flex:1,flexWrap:"wrap"}},
+      el("span",{style:{fontSize:13,flexShrink:0}},"🔒"),
+      el("span",{style:{color:C.orange,fontWeight:700,fontSize:12,whiteSpace:"nowrap",marginRight:2}},"Microsoft prices increase July 1, 2026"),
+      el("span",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5}},"Agreements renewing after that date move to new rates — locking in before then preserves current pricing if it applies to you.")
+    ),
+    el("button",{onClick:function(){_goToFeedback(); window.scrollTo({top:0,behavior:"smooth"});},style:{background:C.orange,color:"#fff",border:"none",borderRadius:6,padding:"5px 14px",fontWeight:800,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}},"Talk to TrustDigital \u2192")
+  );
+}
+function Footer() {
+  return el("footer",{style:{borderTop:"1px solid "+C.border,padding:"14px 20px",textAlign:"center"}},
+    el("div",{style:{color:C.textSecondary,fontSize:10,lineHeight:1.7}},
+      "© "+new Date().getFullYear()+" TrustDigital · Microsoft Solutions Partner · Modern Work Specialization",el("br"),
+      "Pricing reflects Microsoft 365 CSP/MSRP rates. Actual pricing varies by agreement and renewal date."
+    )
+  );
+}
+function Wrap(props) {
+  return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
+    el(NavBar,null),
+    el("div",{style:{maxWidth:props.maxWidth||640,margin:"0 auto",padding:"32px 18px"}},props.children),
+    el(Footer,null)
+  );
+}
+function HRModal(props) {
+  return el("div",{style:{position:"fixed",inset:0,background:"rgba(5,15,30,0.93)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
+    el("div",{style:{background:C.bgCard,border:"1px solid "+C.border,borderRadius:14,maxWidth:660,width:"100%",maxHeight:"90vh",overflow:"hidden",display:"flex",flexDirection:"column"}},
+      el("div",{style:{padding:"13px 18px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between"}},
+        el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:14}},"HR Data Request Template"),
+        el("button",{onClick:props.onClose,style:{background:"transparent",border:"none",color:C.textSecondary,fontSize:20,cursor:"pointer",lineHeight:1}},"x")
+      ),
+      el("pre",{style:{flex:1,overflow:"auto",margin:0,padding:16,fontSize:11,color:C.textSecondary,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.7,fontFamily:"monospace",background:C.bgDeep}},props.template),
+      el("div",{style:{padding:"10px 18px",borderTop:"1px solid "+C.border,display:"flex",gap:8,justifyContent:"flex-end"}},
+        el(Btn,{variant:"ghost",onClick:props.onClose},"Close"),
+        el(CopyButton,{text:props.template,label:"Copy",style:{background:"linear-gradient(135deg,"+C.tealDim+","+C.blue+")",color:C.bgDeep,border:"none",padding:"10px 18px",fontSize:12}})
+      )
+    )
+  );
+}
+function BottomCTABanner(props) {
+  return el("div",{style:{position:"sticky",bottom:0,zIndex:50,background:"linear-gradient(135deg,#0B2240,#0F2D1A)",borderTop:"1px solid "+C.teal+"44",padding:"8px 20px"}},
+    el("div",{style:{maxWidth:1100,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}},
+      el("div",{style:{display:"flex",alignItems:"center",gap:6,minWidth:0,overflow:"hidden"}},
+        el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},props.skuName?"Maximize your "+props.skuName+" investment with TrustDigital":"Put your Microsoft licensing on autopilot"),
+        props.savings>0 ? el("div",{style:{color:C.textSecondary,fontSize:11,flexShrink:0,marginLeft:4}},"— est. "+fmtK(props.savings)+"/yr recovered") : null
+      ),
+      el("div",{style:{flexShrink:0}},
+        el("button",{onClick:function(){_goToFeedback();},style:{background:"linear-gradient(135deg,"+C.tealDim+","+C.blue+")",color:C.bgDeep,border:"none",borderRadius:7,padding:"7px 16px",fontWeight:800,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}},"Schedule Free Audit")
+      )
+    )
+  );
+}
+function TDSidebar() {
+  const benefits = [
+    {icon:"🥇",title:"Top 1% of Microsoft Partners",desc:"Modern Work Specialization is a verified practice credential requiring demonstrated customer outcomes, technical depth, and ongoing Microsoft audits."},
+    {icon:"⚡",title:"Priority Partner Support",desc:"Direct Microsoft escalation access. When something breaks or a renewal is on the line, we skip the standard support queue."},
+    {icon:"🔄",title:"Managed License Splits",desc:"We monitor your Annual/M2M balance monthly and adjust as headcount changes. You don't manage it."},
+    {icon:"🤖",title:"Copilot & AI Readiness",desc:"We verify your licensing foundation is ready for Microsoft 365 Copilot before you need it."},
+    {icon:"📊",title:"Quarterly Optimization Reviews",desc:"Every quarter we surface savings opportunities, rightsizing options, and renewal strategies."},
+    {icon:"💬",title:"CSP Renewal Negotiation",desc:"Our Microsoft partner status provides pricing leverage you don't have going direct."},
+  ];
+  return el("div",{style:{display:"flex",flexDirection:"column",gap:12,position:"sticky",top:66}},
+    el("div",{style:{background:"linear-gradient(135deg,rgba(91,147,199,0.12),rgba(100,255,218,0.08))",border:"1px solid "+C.teal+"33",borderRadius:10,padding:"14px 16px"}},
+      el("div",{style:{color:C.teal,fontWeight:900,fontSize:15,letterSpacing:"-0.01em",marginBottom:4}},"Microsoft Licensing, Handled."),
+      el("div",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.55,marginBottom:12}},"TrustDigital's Microsoft practice is a dedicated specialty."),
+      el(MSBadge,null)
+    ),
+    el(Card,{style:{padding:"13px 15px"}},
+      el("div",{style:{display:"flex",flexDirection:"column",gap:11}},
+        benefits.map(function(b){
+          return el("div",{key:b.title,style:{display:"flex",gap:9,alignItems:"flex-start"}},
+            el("div",{style:{fontSize:16,flexShrink:0,marginTop:1}},b.icon),
+            el("div",null,
+              el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:2}},b.title),
+              el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.4}},b.desc)
+            )
+          );
+        })
+      )
+    )
+  );
+}
+
+const PLAN_PHASES = [
+  {phase:"Days 1\u201314",tdPhase:"Days 1\u20137",color:C.teal,title:"Audit & Discovery",
+   diy:[
+     "Log into M365 Admin Center \u2192 Reports \u2192 Usage and download CSVs for Exchange, Teams, and SharePoint activity.",
+     "Open the CSVs in Excel and manually cross-reference assigned licenses against last-activity dates. Typically 2\u20134 hours depending on seat count.",
+     "Build a working spreadsheet to track who has what, what\u2019s active, and what looks dormant.",
+     "Email HR to request a current headcount list \u2014 use the HR Data Request Template in the Downloads tab to make sure you get back the data you actually need.",
+     "When HR responds, compare the roster against your Active Directory or Entra ID export and flag any accounts that no longer appear.",
+     "Compile your findings into a gap list. At the end of week 2, you have a point-in-time snapshot \u2014 not a live view."
+   ],
+   td:[
+     {day:"Day 1",text:"Kickoff call scheduled \u2014 we get your Entra ID read access and start the automated audit immediately."},
+     {day:"Day 2",text:"Automated Entra ID scan complete. Every assigned license, last sign-in, and account status across your entire tenant."},
+     {day:"Day 3",text:"We send the HR data request on your behalf and own the follow-through."},
+     {day:"Day 5",text:"Gap report delivered: a verified list of ghost seats, misaligned licenses, and optimization opportunities \u2014 ready for your review."},
+     {day:"Day 7",text:"Leadership-ready summary prepared. No IT prep required on your end."}
+   ],
+   bridge:"Between the ticket queue and everything else IT is juggling, manual license audits get deprioritized fast. We have the audit done before most teams finish pulling the first CSV."},
+  {phase:"Days 15\u201330",tdPhase:"Days 8\u201318",color:C.blueBrand,title:"Restructure & Right-Size",
+   diy:[
+     "Go through confirmed ghost seats one by one in Admin Center and manually remove licenses. For 50+ seats, plan on 1\u20132 hours of clicking.",
+     "Identify users on the wrong license tier (e.g., E3 when E1 is sufficient). Downgrading requires checking each user\u2019s active feature usage first.",
+     "Contact your Microsoft reseller or MPSA contact to ask about renewal options. Without a partner, you\u2019re negotiating off list price.",
+     "Request a quote for your current headcount and compare annual vs. M2M pricing on your own.",
+     "Coordinate timing of license changes with HR and Finance to avoid mid-billing-cycle surprises."
+   ],
+   td:[
+     {day:"Day 8",text:"All confirmed ghost seat revocations executed in a single coordinated action \u2014 no manual clicking."},
+     {day:"Day 10",text:"Downgrade candidates reviewed: users who haven\u2019t touched premium features in 90+ days, flagged with data to back each move."},
+     {day:"Day 12",text:"Renewal discussions opened through our CSP channel. Partner pricing from day one \u2014 not list price."},
+     {day:"Day 16",text:"Annual vs. M2M split modeled against your actual usage data and projected hiring. Concrete recommendation with numbers."},
+     {day:"Day 18",text:"Restructure complete. Estimated monthly savings confirmed before anything is signed."}
+   ],
+   bridge:"List price is for organizations that don\u2019t have a Microsoft Solutions Partner in their corner. You do now."},
+  {phase:"Days 31\u201360",tdPhase:"Days 19\u201335",color:C.purple,title:"Automate & Monitor",
+   diy:[
+     "Set a monthly calendar reminder to re-run the Admin Center usage report. Every month you\u2019ll repeat the same 2\u20134 hour manual pull.",
+     "Handle license add/remove requests as IT tickets come in. No proactive flagging \u2014 you respond when someone asks.",
+     "Coordinate with HR manually on every offboarding event. Accounts stay active until IT is notified.",
+     "Build your own alert logic in Power Automate or a spreadsheet if you want something more automated. Budget 10\u201320 hours of setup.",
+     "Track changes in a shared doc or spreadsheet. No single source of truth across HR, IT, and Finance."
+   ],
+   td:[
+     {day:"Day 19",text:"Entra ID lifecycle workflows activated: when HR marks someone inactive, a license suspension triggers automatically within 24 hours."},
+     {day:"Day 22",text:"Live dashboard deployed: real-time license count vs. active headcount. One view for IT, HR, and Finance."},
+     {day:"Day 25",text:"Automated alerts configured: ghost seats flagged within 24 hours of last sign-in expiring."},
+     {day:"Day 35",text:"First automated monthly report delivered. What changed, what was saved, what\u2019s next \u2014 no manual pulls."}
+   ],
+   bridge:"You shouldn\u2019t need a calendar reminder to know someone still has a license after they quit. These workflows close that gap automatically."},
+  {phase:"Days 61\u201390",tdPhase:"Days 36\u201355",color:C.green,title:"Report & Lock In Savings",
+   diy:[
+     "Export another round of Admin Center CSVs and compare against your Day 1 baseline. Calculate savings manually by diffing license counts and pricing.",
+     "Write up a summary for leadership. Without verified data tied to Entra ID, it\u2019s a best estimate \u2014 not an auditable number.",
+     "Submit renewal paperwork based on your current headcount. If headcount has shifted since you pulled the data, you may be signing on inaccurate numbers.",
+     "Document a quarterly review process for the next cycle."
+   ],
+   td:[
+     {day:"Day 36",text:"Savings report built from verified Entra ID data \u2014 not estimates. Every reclaimed license traced back to a specific action."},
+     {day:"Day 40",text:"CFO-ready summary delivered: license spend before vs. after, with month-over-month trend and projected annual savings."},
+     {day:"Day 48",text:"CSP renewal finalized at negotiated pricing, using your actual usage data \u2014 not a point-in-time headcount snapshot."},
+     {day:"Day 55",text:"Quarterly review cadence established. Next round of optimization opportunities flagged before your next renewal cycle."}
+   ],
+   bridge:"No more \u2018we think it\u2019s around this much.\u2019 Your CFO gets verified numbers, not back-of-napkin math."},
+];
+
+const TEMPLATES = [
+  {label:"Executive / Leadership",    icon:"👔",turnoverPct:8, avgTenure:"24mo",growth:1,desc:"C-suite, VPs, Directors"},
+  {label:"Sales / Business Dev",      icon:"💼",turnoverPct:28,avgTenure:"6mo", growth:5,desc:"AEs, BDRs, Account Managers"},
+  {label:"IT / Technical Staff",      icon:"🖥️",turnoverPct:12,avgTenure:"12mo",growth:2,desc:"Engineers, Sysadmins, Helpdesk"},
+  {label:"Support / Customer Success",icon:"🎧",turnoverPct:38,avgTenure:"6mo", growth:4,desc:"Tier 1 support, CS reps"},
+  {label:"Operations / Admin",        icon:"⚙️",turnoverPct:14,avgTenure:"24mo",growth:2,desc:"Ops, HR, Admin, Finance"},
+  {label:"Marketing",                 icon:"📣",turnoverPct:19,avgTenure:"6mo", growth:2,desc:"Marketing, Design, Content"},
+  {label:"Finance / Accounting",      icon:"📊",turnoverPct:9, avgTenure:"24mo",growth:1,desc:"Finance, Accounting, Legal"},
+  {label:"Contractors / Temps",       icon:"🔄",turnoverPct:75,avgTenure:"lt6", growth:5,desc:"Project-based, seasonal, temp"},
+  {label:"Custom / Other",            icon:"✏️",turnoverPct:15,avgTenure:"12mo",growth:0,desc:"Define your own group"},
+];
+
+const PROP_CARDS = [
+  {icon:"🎯",title:"Built around your org",desc:"Input your actual team structures. Get a license recommendation that reflects how you work \u2014 not a generic feature comparison."},
+  {icon:"👻",title:"Ghost seats add up fast",desc:"Every employee who leaves mid-year keeps costing you. We calculate your exact waste per group and tell you when month-to-month saves money."},
+  {icon:"🔍",title:"Clarity, not a sales pitch",desc:"This tool exists because we think everyone should understand their Microsoft spend. Whether you work with us or not, the analysis is yours."},
+];
+
+const FEATURE_DOCS = {
+  endpoint_security: {url:"https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/microsoft-defender-endpoint",label:"Defender for Endpoint"},
+  advanced_edr:      {url:"https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/defender-endpoint-plan-1-2",label:"Defender for Endpoint Plan 1 vs 2"},
+  defender_xdr:      {url:"https://learn.microsoft.com/en-us/unified-secops-platform/",label:"Unified Security Operations"},
+  pim:               {url:"https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure",label:"Privileged Identity Management"},
+  compliance_basic:  {url:"https://learn.microsoft.com/en-us/purview/audit-solutions-overview",label:"Audit & Compliance"},
+  dlp:               {url:"https://learn.microsoft.com/en-us/purview/dlp-learn-about-dlp",label:"Data Loss Prevention"},
+  ediscovery:        {url:"https://learn.microsoft.com/en-us/purview/ediscovery",label:"eDiscovery"},
+  purview_full:      {url:"https://learn.microsoft.com/en-us/purview/purview",label:"Microsoft Purview"},
+  device_mgmt:       {url:"https://learn.microsoft.com/en-us/mem/intune/fundamentals/what-is-intune",label:"Microsoft Intune"},
+  windows_ent:       {url:"https://learn.microsoft.com/en-us/windows/whats-new/windows-11-overview",label:"Windows 11 Enterprise"},
+  teams_phone:       {url:"https://learn.microsoft.com/en-us/microsoftteams/cloud-voice-landing-page",label:"Teams Phone"},
+  power_bi:          {url:"https://learn.microsoft.com/en-us/power-bi/fundamentals/power-bi-overview",label:"Power BI"},
+  copilot:           {url:"https://learn.microsoft.com/en-us/copilot/microsoft-365/microsoft-365-copilot-overview",label:"Microsoft 365 Copilot"},
+};
+
+const SAMPLE_CAVEATS = [
+  "Defender for Endpoint Plan 1 included. Advanced EDR (P2) with live response and threat hunting requires E5.",
+  "DLP covers email and files only. Teams chat DLP and Endpoint DLP require E5.",
+  "eDiscovery Standard only. Premium analytics and case management require E5.",
+  "No Entra ID P2. Privileged Identity Management requires a separate add-on or upgrade to E5.",
+];
+
+function CountdownClock() {
+  var TARGET = new Date("2026-07-01T00:00:00");
+  var calcRemaining = function() {
+    var diff = TARGET - Date.now();
+    if (diff <= 0) return {d:0, h:0, m:0, s:0, expired:true};
+    var s = Math.floor(diff / 1000);
+    var m = Math.floor(s / 60); s = s % 60;
+    var h = Math.floor(m / 60); m = m % 60;
+    var d = Math.floor(h / 24); h = h % 24;
+    return {d:d, h:h, m:m, s:s, expired:false};
+  };
+  var [rem, setRem] = useState(calcRemaining);
+  useEffect(function() {
+    if (rem.expired) return;
+    var id = setInterval(function() { setRem(calcRemaining()); }, 1000);
+    return function() { clearInterval(id); };
+  }, [rem.expired]);
+  var pad = function(n) { return String(n).padStart(2, "0"); };
+  var units = [
+    {label:"Days", val:rem.d},
+    {label:"Hours", val:pad(rem.h)},
+    {label:"Minutes", val:pad(rem.m)},
+    {label:"Seconds", val:pad(rem.s)},
+  ];
+  if (rem.expired) {
+    return el("div",{style:{textAlign:"center",padding:"18px 0",color:C.orange,fontWeight:800,fontSize:16}},
+      "\u26A0\uFE0F Microsoft 365 price increases are now in effect."
+    );
+  }
+  return el("div",{style:{marginBottom:18}},
+    el("div",{style:{textAlign:"center",color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10}},
+      "Time Until July 1, 2026 Price Increase"
+    ),
+    el("div",{style:{display:"flex",justifyContent:"center",gap:8}},
+      units.map(function(u,i) {
+        return el("div",{key:i,style:{
+          background:"rgba(251,146,60,0.10)",
+          border:"1px solid rgba(251,146,60,0.35)",
+          borderRadius:8,
+          padding:"10px 14px",
+          minWidth:64,
+          textAlign:"center"
+        }},
+          el("div",{style:{
+            color:C.orange,
+            fontWeight:900,
+            fontSize:28,
+            fontVariantNumeric:"tabular-nums",
+            lineHeight:1
+          }},u.val),
+          el("div",{style:{color:C.textMuted,fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:4}},u.label)
+        );
+      })
+    )
+  );
+}
+
+
+var _goToFeedback = function(){};  // set by App on each render
+
+function buildEmailHTML(contact, pr, con, includeHR, hrText) {
+  var fmtD  = function(n){ return n===undefined||n===null?'—':'$'+Math.round(Number(n)).toLocaleString(); };
+  var fmtDK = function(n){ return n>=10000?('$'+(n/1000).toFixed(1)+'K'):fmtD(n); };
+  var esc   = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var dt    = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+
+  var C = {
+    navy:'#0A192F', teal:'#64FFDA', blue:'#5B93C7', light:'#f8fafc',
+    border:'#e2e8f0', green:'#166534', greenBg:'#f0fdf4', greenBorder:'#bbf7d0',
+    text:'#0f172a', muted:'#475569', subtle:'#94a3b8'
+  };
+
+  /* ── helpers ── */
+  var pill = function(label, bg, color){
+    bg=bg||C.navy; color=color||C.teal;
+    return '<span style="display:inline-block;background:'+bg+';color:'+color+';border-radius:5px;padding:3px 11px;font-size:11px;font-weight:800;letter-spacing:0.07em;">'+esc(label)+'</span>';
+  };
+  var badge = function(label, bg, color){
+    bg=bg||'#e0f2fe'; color=color||'#0369a1';
+    return '<span style="display:inline-block;background:'+bg+';color:'+color+';border-radius:20px;padding:2px 9px;font-size:11px;font-weight:700;">'+esc(label)+'</span>';
+  };
+  var sectionHead = function(title){
+    return '<p style="margin:0 0 14px;color:'+C.navy+';font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;border-bottom:2px solid '+C.teal+';padding-bottom:6px;">'+esc(title)+'</p>';
+  };
+  var statBox = function(label, val, sub, accent){
+    accent=accent||C.blue;
+    return '<td style="text-align:center;padding:16px 12px;background:#fff;border:1px solid '+C.border+';border-radius:10px;">'
+      +'<div style="font-size:22px;font-weight:900;color:'+accent+';">'+val+'</div>'
+      +'<div style="font-size:11px;color:'+C.muted+';font-weight:700;margin-top:3px;">'+esc(label)+'</div>'
+      +(sub?'<div style="font-size:10px;color:'+C.subtle+';margin-top:2px;">'+esc(sub)+'</div>':'')
+      +'</td>';
+  };
+
+  /* ── total savings ── */
+  var totalSavings  = con.totalSavings||0;
+  var totalSeats    = con.totalSeats||0;
+  var totalAnnual   = con.totalAllAnnual||0;
+  var totalOptimal  = con.totalOptimal||0;
+
+  /* ══════════════════════════════════════════════════════
+     1. HEADER
+  ══════════════════════════════════════════════════════ */
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+    +'<body style="margin:0;padding:0;background:#f1f5f9;font-family:\'Segoe UI\',Arial,sans-serif;">'
+    +'<table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;"><tr><td>'
+    +'<table width="640" cellpadding="0" cellspacing="0" align="center" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.10);">'
+
+    // Header bar
+    +'<tr><td style="background:'+C.navy+';padding:28px 36px;">'
+    +'<img src="https://images.squarespace-cdn.com/content/661700cd3e692d096f5c84fd/39f1a84b-10d7-433e-8ca0-c3ddcf88bc39/Untitled+design+%289%29.png?content-type=image%2Fpng" alt="TrustDigital" height="38" style="display:block;max-width:200px;">'
+    +'<div style="color:'+C.teal+';font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;margin-top:12px;">Microsoft 365 Licensing Intelligence Report</div>'
+    +'<div style="color:#8892a4;font-size:11px;margin-top:4px;">Prepared for '+esc(contact.company)+' &nbsp;·&nbsp; '+esc(dt)+'</div>'
+    +'</td></tr>'
+
+    /* ══════════════════════════════════════════════════════
+       2. GREETING
+    ══════════════════════════════════════════════════════ */
+    +'<tr><td style="padding:30px 36px 12px;">'
+    +'<h2 style="margin:0 0 10px;color:'+C.navy+';font-size:21px;font-weight:800;">Hi '+esc(contact.name.split(' ')[0])+',</h2>'
+    +'<p style="margin:0 0 8px;color:'+C.muted+';font-size:14px;line-height:1.7;">Here\'s your complete Microsoft 365 licensing analysis for <strong style="color:'+C.navy+';">'+esc(contact.company)+'</strong>. '
+    +'We modeled '+esc(String(pr.length))+' user group'+(pr.length!==1?'s':'')+' across '+esc(String(totalSeats))+' total seats to find exactly where you\'re overpaying and where the right structure saves real money.</p>'
+    +'<p style="margin:0;color:'+C.subtle+';font-size:12px;">Questions? Reply to this email or <a href="https://trustdigital.net" style="color:'+C.blue+';">schedule a call with a specialist</a>.</p>'
+    +'</td></tr>'
+
+    /* ══════════════════════════════════════════════════════
+       3. EXECUTIVE SUMMARY
+    ══════════════════════════════════════════════════════ */
+    +'<tr><td style="padding:16px 36px 0;">'
+    +sectionHead('Executive Summary')
+    // Big savings banner
+    +(totalSavings>0
+      ? '<div style="background:'+C.greenBg+';border:1px solid '+C.greenBorder+';border-radius:12px;padding:22px 28px;margin-bottom:20px;text-align:center;">'
+        +'<div style="color:'+C.green+';font-size:32px;font-weight:900;letter-spacing:-0.5px;">'+fmtDK(totalSavings)+'<span style="font-size:16px;font-weight:700;">/yr</span></div>'
+        +'<div style="color:'+C.green+';font-size:13px;margin-top:6px;font-weight:600;">Estimated annual savings with the optimized structure</div>'
+        +'<div style="color:#4ade80;font-size:11px;margin-top:4px;">3-year savings: '+fmtDK(totalSavings*3)+'</div>'
+        +'</div>'
+      : '')
+    // Stat row
+    +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:8px 0;margin-bottom:20px;"><tr>'
+    +statBox('Groups Analyzed', String(pr.length), null, C.blue)
+    +statBox('Total Seats', String(totalSeats), null, C.blue)
+    +statBox('All-Annual Cost', fmtDK(totalAnnual)+'/yr', 'if everything annual', '#b45309')
+    +statBox('Optimized Cost', fmtDK(totalOptimal)+'/yr', 'recommended structure', C.green)
+    +'</tr></table>'
+    +'</td></tr>'
+
+    /* ══════════════════════════════════════════════════════
+       4. HOW THE SAVINGS WORK
+    ══════════════════════════════════════════════════════ */
+    +'<tr><td style="padding:16px 36px 0;">'
+    +sectionHead('How the Savings Work')
+    +'<div style="background:#f8fafc;border:1px solid '+C.border+';border-radius:10px;padding:18px 22px;margin-bottom:20px;">'
+    +'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+    +'<td style="width:50%;padding-right:16px;vertical-align:top;">'
+    +'<p style="margin:0 0 8px;font-size:12px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.06em;">Annual Commitment</p>'
+    +'<p style="margin:0;font-size:12px;color:'+C.muted+';line-height:1.65;">Saves ~20% per seat vs. month-to-month, but only when the seat stays filled. If an employee leaves early, you keep paying for an empty seat through year-end — called <strong>ghost waste</strong>.</p>'
+    +'</td>'
+    +'<td style="width:50%;padding-left:16px;vertical-align:top;border-left:1px solid '+C.border+';">'
+    +'<p style="margin:0 0 8px;font-size:12px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.06em;">Month-to-Month</p>'
+    +'<p style="margin:0;font-size:12px;color:'+C.muted+';line-height:1.65;">Costs ~20% more per seat, but turns off the day someone leaves — zero ghost waste. When average leaver tenure is under 10 months, M2M wins even at the premium price.</p>'
+    +'</td>'
+    +'</tr></table>'
+    +'<p style="margin:12px 0 0;font-size:11px;color:'+C.subtle+';font-style:italic;">This report only recommends M2M where the math genuinely favors it — not as a blanket recommendation.</p>'
+    +'</div>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     5. GROUP-BY-GROUP BREAKDOWN
+  ══════════════════════════════════════════════════════ */
+  html += '<tr><td style="padding:16px 36px 0;">'+sectionHead('Group-by-Group Recommendations')+'</td></tr>';
+
+  pr.forEach(function(r, i) {
+    var pv = paymentVerdict(r.turnoverPct, r.avgTenure);
+    var pvColor = pv.color||C.teal;
+    var driverFeats = (r.lic.driverFeatures||[]);
+    var bonusFeats  = (r.lic.bonusFeatures||[]);
+    var annualPerSeat = r.sku.monthly_annual;
+    var m2mPerSeat    = r.sku.monthly_m2m;
+
+    // Feature list helper
+    var featList = function(fids){
+      return fids.map(function(f){
+        var feat = ALL_FEATURES.find(function(x){return x.id===f;})||{label:f,desc:''};
+        var doc  = FEATURE_DOCS[f];
+        var comp = feat.comp ? '<span style="color:'+C.subtle+';font-size:10px;"> ('+feat.comp+')</span>' : '';
+        return '<li style="margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid #f1f5f9;">'
+          +(doc
+            ? '<a href="'+doc.url+'" style="color:'+C.blue+';font-size:13px;font-weight:600;text-decoration:none;">'+esc(feat.label)+'</a>'
+            : '<span style="color:'+C.text+';font-size:13px;font-weight:600;">'+esc(feat.label)+'</span>')
+          +comp
+          +(feat.desc ? '<br><span style="color:'+C.muted+';font-size:11px;line-height:1.5;">'+esc(feat.desc)+'</span>' : '')
+          +'</li>';
+      }).join('');
+    };
+
+    // Payment structure detail
+    var payDetail = '';
+    if(r.pay.recommendation === 'hybrid'){
+      payDetail = '<div style="margin-top:8px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;">'
+        +'<span style="font-size:12px;color:#92400e;font-weight:700;">Hybrid split: </span>'
+        +'<span style="font-size:12px;color:#92400e;">'+r.pay.recommendedAnnual+' seats on annual &nbsp;+&nbsp; '+r.pay.recommendedM2m+' seats on M2M</span>'
+        +'</div>';
+    }
+
+    // Copilot row
+    var copilotRow = '';
+    if(r.hasCop && r.copSeats > 0){
+      copilotRow = '<div style="margin-top:12px;background:#faf5ff;border:1px solid #d8b4fe;border-radius:8px;padding:12px 16px;">'
+        +'<div style="font-size:12px;font-weight:800;color:#6d28d9;margin-bottom:4px;">🤖 Microsoft 365 Copilot</div>'
+        +'<div style="font-size:12px;color:#7c3aed;">'+r.copSeats+' seats &nbsp;·&nbsp; $'+r.copMonthly+'/seat/mo &nbsp;·&nbsp; '+fmtDK(r.copCost)+'/yr</div>'
+        +'<div style="font-size:11px;color:#9f7aea;margin-top:4px;">Add-on to base license. Requires M365 E3 or higher.</div>'
+        +'</div>';
+    }
+
+    // Financials
+    var savingsNote = r.netSavings > 0
+      ? '<tr><td style="padding:8px 0;border-top:2px solid '+C.greenBorder+';">'
+        +'<span style="font-size:13px;font-weight:800;color:'+C.green+';">Savings: '+fmtDK(r.netSavings)+'/yr</span>'
+        +'<span style="font-size:11px;color:#4ade80;"> &nbsp;('+fmtDK(r.netSavings*3)+' over 3 years)</span>'
+        +'</td></tr>'
+      : '';
+
+    html += '<tr><td style="padding:0 36px 20px;">'
+      // Group card
+      +'<div style="border:1px solid '+C.border+';border-radius:12px;overflow:hidden;">'
+
+      // Card header
+      +'<div style="background:'+C.navy+';padding:16px 22px;display:flex;align-items:center;">'
+      +'<span style="font-size:22px;margin-right:10px;">'+esc(r.icon||'💼')+'</span>'
+      +'<div style="flex:1;">'
+      +'<div style="font-weight:800;font-size:16px;color:#fff;">'+esc(r.name)+'</div>'
+      +'<div style="font-size:11px;color:#8892a4;margin-top:2px;">'+esc(String(r.seats))+' seats &nbsp;·&nbsp; '+esc(String(r.turnoverPct))+'% annual turnover &nbsp;·&nbsp; avg '+esc(String(r.pay.tenure))+' mo. tenure</div>'
+      +'</div>'
+      +pill(r.sku.shortName||r.sku.displayName, C.teal, C.navy)
+      +'</div>'
+
+      // Card body
+      +'<div style="padding:20px 22px;">'
+
+      // License + pricing
+      +'<div style="margin-bottom:16px;">'
+      +'<div style="font-size:11px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Recommended License</div>'
+      +'<div style="font-size:15px;font-weight:800;color:'+C.navy+';">'+esc(r.sku.displayName)+'</div>'
+      +'<table cellpadding="0" cellspacing="0" style="margin-top:8px;"><tr>'
+      +'<td style="padding-right:20px;"><span style="font-size:12px;color:'+C.muted+';">Annual rate &nbsp;</span><span style="font-size:13px;font-weight:700;color:'+C.text+';">$'+annualPerSeat+'/seat/mo</span></td>'
+      +'<td><span style="font-size:12px;color:'+C.muted+';">M2M rate &nbsp;</span><span style="font-size:13px;font-weight:700;color:'+C.text+';">$'+m2mPerSeat+'/seat/mo</span></td>'
+      +'</tr></table>'
+      +'</div>'
+
+      // Divider
+      +'<hr style="border:none;border-top:1px solid '+C.border+';margin:0 0 16px;">'
+
+      // Payment structure
+      +'<div style="margin-bottom:16px;">'
+      +'<div style="font-size:11px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Payment Structure</div>'
+      +'<div>'
+      +badge(pv.badge||pv.verdict, pvColor+'22', pvColor)
+      +'<span style="font-size:12px;color:'+C.muted+';margin-left:8px;line-height:1.5;">'+esc(pv.short)+'</span>'
+      +'</div>'
+      +payDetail
+      +'</div>'
+
+      // Divider
+      +'<hr style="border:none;border-top:1px solid '+C.border+';margin:0 0 16px;">'
+
+      // Driver features
+      +(driverFeats.length > 0
+        ? '<div style="margin-bottom:16px;">'
+          +'<div style="font-size:11px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Why '+esc(r.sku.shortName||'This License')+' — What Drives This Recommendation</div>'
+          +'<ul style="margin:0;padding-left:18px;list-style:disc;">'+featList(driverFeats)+'</ul>'
+          +'</div>'
+        : '<div style="margin-bottom:16px;padding:10px 14px;background:#f0fdf4;border-radius:6px;font-size:12px;color:'+C.green+';">All selected capabilities are covered by the base '+esc(r.sku.shortName)+' plan.</div>')
+
+      // Bonus features
+      +(bonusFeats.length > 0
+        ? '<div style="margin-bottom:16px;">'
+          +'<div style="font-size:11px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Also Included in '+esc(r.sku.shortName)+'</div>'
+          +'<ul style="margin:0;padding-left:18px;list-style:disc;color:'+C.muted+';">'+featList(bonusFeats)+'</ul>'
+          +'</div>'
+        : '')
+
+      // Copilot
+      +copilotRow
+
+      // Financials table
+      +'<div style="margin-top:16px;">'
+      +'<div style="font-size:11px;font-weight:800;color:'+C.navy+';text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Group Financials</div>'
+      +'<table width="100%" cellpadding="0" cellspacing="6" style="border-collapse:separate;border-spacing:0;">'
+      +'<tr style="background:#f8fafc;">'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';border-radius:6px 0 0 6px;font-size:12px;color:'+C.muted+';">All-Annual Cost</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:13px;font-weight:700;color:'+C.text+';text-align:right;">'+fmtDK(r.totalAllAnnual)+'/yr</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';border-radius:0 6px 6px 0;font-size:11px;color:'+C.subtle+';text-align:right;">all '+r.seats+' seats × $'+annualPerSeat+'/mo × 12</td>'
+      +'</tr>'
+      +'<tr style="background:#fff;">'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';border-radius:6px 0 0 6px;font-size:12px;color:'+C.muted+';">Optimized Cost</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:13px;font-weight:700;color:'+C.navy+';text-align:right;">'+fmtDK(r.totalOptimal)+'/yr</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';border-radius:0 6px 6px 0;font-size:11px;color:'+C.subtle+';text-align:right;">recommended annual/M2M mix</td>'
+      +'</tr>'
+      +savingsNote
+      +'</table>'
+      +'</div>'
+
+      +'</div></div>' // close card body and card
+      +'</td></tr>';
+  });
+
+  /* ══════════════════════════════════════════════════════
+     6. CONSOLIDATED TOTALS TABLE
+  ══════════════════════════════════════════════════════ */
+  var groupRows = pr.map(function(r){
+    return '<tr>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:13px;color:'+C.text+';">'
+      +esc(r.icon||'')+'&nbsp;'+esc(r.name)
+      +'</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:12px;color:'+C.muted+';text-align:center;">'+r.seats+'</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:12px;color:'+C.muted+';text-align:center;">'
+      +(r.sku.shortName||r.sku.displayName)
+      +'</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:12px;color:'+C.muted+';text-align:right;">'+fmtDK(r.totalAllAnnual)+'</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:12px;color:'+C.navy+';font-weight:700;text-align:right;">'+fmtDK(r.totalOptimal)+'</td>'
+      +'<td style="padding:10px 14px;border:1px solid '+C.border+';font-size:12px;color:'+C.green+';font-weight:700;text-align:right;">'
+      +(r.netSavings>0?fmtDK(r.netSavings):'—')
+      +'</td>'
+      +'</tr>';
+  }).join('');
+
+  html += '<tr><td style="padding:4px 36px 20px;">'
+    +sectionHead('Consolidated Cost Summary')
+    +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+    +'<tr style="background:'+C.navy+';">'
+    +'<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">Group</th>'
+    +'<th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">Seats</th>'
+    +'<th style="padding:10px 14px;text-align:center;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">License</th>'
+    +'<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">All-Annual/yr</th>'
+    +'<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">Optimized/yr</th>'
+    +'<th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:'+C.teal+';letter-spacing:0.06em;">Savings/yr</th>'
+    +'</tr>'
+    +groupRows
+    // Totals row
+    +'<tr style="background:'+C.greenBg+';border-top:2px solid '+C.greenBorder+';">'
+    +'<td style="padding:12px 14px;font-size:13px;font-weight:800;color:'+C.navy+';" colspan="3">Total — '+totalSeats+' seats across '+pr.length+' group'+(pr.length!==1?'s':'')+'</td>'
+    +'<td style="padding:12px 14px;font-size:13px;font-weight:700;color:#92400e;text-align:right;">'+fmtDK(totalAnnual)+'</td>'
+    +'<td style="padding:12px 14px;font-size:13px;font-weight:800;color:'+C.navy+';text-align:right;">'+fmtDK(totalOptimal)+'</td>'
+    +'<td style="padding:12px 14px;font-size:14px;font-weight:900;color:'+C.green+';text-align:right;">'+(totalSavings>0?fmtDK(totalSavings):'—')+'</td>'
+    +'</tr>'
+    +'</table>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     7. JULY 2026 PRICING ALERT
+  ══════════════════════════════════════════════════════ */
+  html += '<tr><td style="padding:0 36px 20px;">'
+    +'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:16px 20px;">'
+    +'<div style="font-size:13px;font-weight:800;color:#9a3412;margin-bottom:6px;">⚠️ Heads Up: Microsoft Price Increase — July 2026</div>'
+    +'<p style="margin:0 0 8px;font-size:12px;color:#92400e;line-height:1.65;">Microsoft has announced list price changes effective July 1, 2026. Locking in your renewal before this date can avoid the increases:</p>'
+    +'<table cellpadding="0" cellspacing="0" style="margin:0;"><tr>'
+    +'<td style="padding-right:24px;">'
+    +'<div style="font-size:11px;font-weight:700;color:#9a3412;">Business Premium</div>'
+    +'<div style="font-size:11px;color:#92400e;">No change ($22/seat/mo)</div>'
+    +'</td>'
+    +'<td style="padding-right:24px;">'
+    +'<div style="font-size:11px;font-weight:700;color:#9a3412;">E3</div>'
+    +'<div style="font-size:11px;color:#92400e;">$36 → $39 (+8%)</div>'
+    +'</td>'
+    +'<td>'
+    +'<div style="font-size:11px;font-weight:700;color:#9a3412;">E5</div>'
+    +'<div style="font-size:11px;color:#92400e;">$57 → $60 (+5%)</div>'
+    +'</td>'
+    +'</tr></table>'
+    +'<p style="margin:10px 0 0;font-size:11px;color:#b45309;font-style:italic;">Report pricing reflects current CSP/MSRP rates. A TrustDigital specialist can help you lock in pre-increase terms.</p>'
+    +'</div>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     8. HR DATA REQUEST (if opted in)
+  ══════════════════════════════════════════════════════ */
+  if(includeHR && hrText){
+    html += '<tr><td style="padding:0 36px 20px;">'
+      +sectionHead('HR Data Confirmation Request')
+      +'<p style="margin:0 0 12px;font-size:12px;color:'+C.muted+';line-height:1.65;">Forward the template below to your HR or People Ops team to confirm the turnover and tenure inputs used in this analysis. Refining these numbers will tighten the recommendation further.</p>'
+      +'<pre style="margin:0;font-family:monospace;font-size:11px;color:'+C.muted+';white-space:pre-wrap;background:#f8fafc;border:1px solid '+C.border+';border-radius:8px;padding:16px;">'+esc(hrText)+'</pre>'
+      +'</td></tr>';
+  }
+
+  /* ══════════════════════════════════════════════════════
+     9. WHY TRUSTDIGITAL
+  ══════════════════════════════════════════════════════ */
+  html += '<tr><td style="padding:0 36px 20px;">'
+    +'<div style="background:'+C.navy+';border-radius:12px;padding:24px 28px;">'
+    +'<div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:4px;">Why TrustDigital</div>'
+    +'<div style="font-size:11px;color:#8892a4;margin-bottom:18px;">Microsoft Solutions Partner · Modern Work Specialization · Top 1% globally</div>'
+    +'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+    +'<td style="width:50%;vertical-align:top;padding-right:14px;">'
+    +'<div style="margin-bottom:12px;"><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">🔍 Validate Against Live Data</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">We run your analysis against actual Entra ID usage data — not estimates. Ghost seats and misaligned licenses get identified by name.</div></div>'
+    +'<div style="margin-bottom:12px;"><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">💰 Better-Than-List Pricing</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">As a direct CSP, we negotiate your renewal below MSRP. The savings in this report are conservative — actual results are typically higher.</div></div>'
+    +'<div style="margin-bottom:12px;"><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">📅 Annual/M2M Split Management</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">We monitor and rebalance your annual/M2M ratio quarterly. You never overpay for seats that turned over.</div></div>'
+    +'</td>'
+    +'<td style="width:50%;vertical-align:top;padding-left:14px;border-left:1px solid #1e3a5f;">'
+    +'<div style="margin-bottom:12px;"><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">🚀 Microsoft Copilot Readiness</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">We assess your environment for Copilot eligibility, recommend the right seat count, and manage the rollout — including adoption support.</div></div>'
+    +'<div style="margin-bottom:12px;"><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">🛡️ Priority Partner Support</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">Direct Microsoft escalation path. Quarterly licensing reviews. No waiting on a general support queue.</div></div>'
+    +'<div><div style="color:'+C.teal+';font-size:13px;font-weight:700;margin-bottom:3px;">📊 Ongoing Reporting</div><div style="color:#8892a4;font-size:11px;line-height:1.5;">Monthly automated reports on license utilization, cost changes, and optimization opportunities — no manual pulls required.</div></div>'
+    +'</td>'
+    +'</tr></table>'
+    +'</div>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     10. NEXT STEPS TIMELINE
+  ══════════════════════════════════════════════════════ */
+  html += '<tr><td style="padding:0 36px 20px;">'
+    +sectionHead('What Happens Next')
+    +'<table width="100%" cellpadding="0" cellspacing="0">'
+    +'<tr><td style="padding:0 0 12px 0;">'
+    +'<table width="100%" cellpadding="0" cellspacing="8"><tr>'
+    // Step 1
+    +'<td style="width:25%;vertical-align:top;">'
+    +'<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px;text-align:center;">'
+    +'<div style="font-size:18px;margin-bottom:6px;">📞</div>'
+    +'<div style="font-size:10px;font-weight:800;color:#0369a1;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Day 1</div>'
+    +'<div style="font-size:12px;font-weight:700;color:'+C.navy+';margin-bottom:4px;">Discovery Call</div>'
+    +'<div style="font-size:11px;color:'+C.muted+';">Review this analysis with a specialist</div>'
+    +'</div></td>'
+    // Step 2
+    +'<td style="width:25%;vertical-align:top;">'
+    +'<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px;text-align:center;">'
+    +'<div style="font-size:18px;margin-bottom:6px;">🔍</div>'
+    +'<div style="font-size:10px;font-weight:800;color:#0369a1;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Day 5</div>'
+    +'<div style="font-size:12px;font-weight:700;color:'+C.navy+';margin-bottom:4px;">Gap Report</div>'
+    +'<div style="font-size:11px;color:'+C.muted+';">Ghost seats & misaligned licenses identified by name</div>'
+    +'</div></td>'
+    // Step 3
+    +'<td style="width:25%;vertical-align:top;">'
+    +'<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px;text-align:center;">'
+    +'<div style="font-size:18px;margin-bottom:6px;">📄</div>'
+    +'<div style="font-size:10px;font-weight:800;color:#0369a1;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Day 14</div>'
+    +'<div style="font-size:12px;font-weight:700;color:'+C.navy+';margin-bottom:4px;">Renewal Proposal</div>'
+    +'<div style="font-size:11px;color:'+C.muted+';">Pricing below MSRP, right annual/M2M split</div>'
+    +'</div></td>'
+    // Step 4
+    +'<td style="width:25%;vertical-align:top;">'
+    +'<div style="background:'+C.greenBg+';border:1px solid '+C.greenBorder+';border-radius:8px;padding:14px;text-align:center;">'
+    +'<div style="font-size:18px;margin-bottom:6px;">✅</div>'
+    +'<div style="font-size:10px;font-weight:800;color:'+C.green+';text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Day 30</div>'
+    +'<div style="font-size:12px;font-weight:700;color:'+C.navy+';margin-bottom:4px;">Savings Live</div>'
+    +'<div style="font-size:11px;color:'+C.muted+';">Optimized structure in place, savings running</div>'
+    +'</div></td>'
+    +'</tr></table>'
+    +'</td></tr></table>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     11. CTA
+  ══════════════════════════════════════════════════════ */
+  var replySubject = encodeURIComponent('Re: Your M365 Licensing Report \u2014 ' + (contact.company||'Your Company'));
+  var replyBody    = encodeURIComponent('Hi,\n\nI just reviewed the licensing analysis and would like to connect with a specialist.\n\nBest,\n' + (contact.name||''));
+  html += '<tr><td style="padding:28px 36px;background:#f8fafc;border-top:2px solid '+C.teal+';text-align:center;">'
+    +'<p style="margin:0 0 6px;font-size:15px;font-weight:800;color:'+C.navy+';">Questions? Just hit Reply.</p>'
+    +'<p style="margin:0 0 22px;color:'+C.muted+';font-size:13px;line-height:1.6;">A TrustDigital specialist will personally review your report and follow up \u2014 usually within one business day. No forms, no scheduling links, no runaround.</p>'
+    +'<a href="mailto:hello@trustdigital.net?subject='+replySubject+'&amp;body='+replyBody+'" style="display:inline-block;background:linear-gradient(135deg,#2DD4BF,#7BC8FF);color:'+C.navy+';text-decoration:none;padding:14px 36px;border-radius:9px;font-weight:800;font-size:15px;letter-spacing:0.02em;">Reply to This Email \u2192</a>'
+    +'<p style="margin:14px 0 0;font-size:11px;color:'+C.subtle+';">Or just hit Reply in your email client \u2014 that works perfectly too.</p>'
+    +'</td></tr>';
+
+  /* ══════════════════════════════════════════════════════
+     12. FOOTER
+  ══════════════════════════════════════════════════════ */
+  html += '<tr><td style="padding:18px 36px;text-align:center;">'
+    +'<p style="margin:0 0 4px;color:'+C.subtle+';font-size:11px;">TrustDigital &nbsp;·&nbsp; Microsoft Modern Work Solutions Partner</p>'
+    +'<p style="margin:0 0 4px;color:'+C.subtle+';font-size:11px;"><a href="https://trustdigital.net" style="color:'+C.blue+';">trustdigital.net</a></p>'
+    +'<p style="margin:0;color:'+C.subtle+';font-size:10px;">Pricing reflects Microsoft 365 CSP/MSRP rates. Actual pricing varies by agreement type and volume. You received this because you ran the M365 Licensing Intelligence tool at trustdigital.net.</p>'
+    +'</td></tr>';
+
+  html += '</table></td></tr></table></body></html>';
+  return html;
+}
+
+
+function App() {
+  const [step,      setStep]     = useState(0);
+  const [profIdx,   setProfIdx]  = useState(0);
+  const [results,   setResults]  = useState(null);
+  const [loading,   setLoading]  = useState(false);
+  const [activeTab, setActiveTab]= useState("report");
+  const [wantsHRForm,  setWantsHRForm]  = useState(false);
+  const [reportEmailDelivered, setReportEmailDelivered] = useState(false);
+  const [fbScheduleDays, setFbScheduleDays] = useState([]);
+  const [fbScheduleTime, setFbScheduleTime] = useState(null);
+  _goToFeedback = function(){ setActiveTab("feedback"); window.scrollTo({top:0,behavior:"smooth"}); };
+  const [fbTopics,  setFbTopics]  = useState([]);
+  const [fbContact, setFbContact] = useState(null);
+  const [fbText,    setFbText]    = useState("");
+  const [fbCustomQ, setFbCustomQ] = useState("");
+  const [fbSent,    setFbSent]    = useState(false);
+  const [fbSending, setFbSending] = useState(false);
+  const [expandedP, setExpandedP]= useState(null);
+  const [showHR,    setShowHR]   = useState(false);
+  const [emailChk,  setEmailChk] = useState(false);
+  const [subStep,   setSubStep]  = useState(0);
+  const [animDir,   setAnimDir]  = useState('fwd');
+  const [selectedTpls, setSelectedTpls] = useState([]);
+  const [errors,    setErrors]   = useState({});
+  const [contact,   setContact]  = useState({name:"",email:"",company:"",title:"",phone:""});
+  const [isMobile,  setIsMobile] = useState(function(){return window.innerWidth < 640;});
+  useEffect(function(){
+    var fn = function(){setIsMobile(window.innerWidth < 640);};
+    window.addEventListener('resize', fn);
+    return function(){window.removeEventListener('resize', fn);};
+  }, []);
+  useEffect(function(){
+    if(step !== 4) return;
+    var t = setTimeout(function(){ setReportEmailDelivered(true); }, 45000);
+    return function(){ clearTimeout(t); };
+  }, [step]);
+
+  const updC = function(k,v) { setContact(function(p){return Object.assign({},p,{[k]:sanitize(v)});}); };
+
+  const makeProfile = function(tpl, idx) {
+    return {
+      id:uid(), color:COLORS[idx%COLORS.length],
+      name:tpl.label, icon:tpl.icon, desc:tpl.desc, seats:20,
+      turnoverPct:Number(tpl.turnoverPct)||10,
+      avgTenure:tpl.avgTenure||"12mo",
+      growth:Number(tpl.growth)||0,
+      selectedFeatures:[], copilotSeats:0,
+    };
+  };
+
+  const [profiles, setProfiles] = useState([makeProfile(TEMPLATES[0],0), makeProfile(TEMPLATES[1],1)]);
+
+  const updP = function(idx,k,v) {
+    setProfiles(function(ps){ return ps.map(function(p,i){ return i===idx ? Object.assign({},p,{[k]:v}) : p; }); });
+  };
+  const toggleFeature = function(idx,fid) {
+    setProfiles(function(ps){
+      return ps.map(function(p,i){
+        if(i!==idx) return p;
+        const cur = p.selectedFeatures;
+        const wasOn = cur.includes(fid);
+        const newFeats = wasOn ? cur.filter(function(x){return x!==fid;}) : cur.concat([fid]);
+        const updates = {selectedFeatures:newFeats};
+        if(fid==='copilot' && !wasOn) updates.copilotSeats = Math.max(1,Number(p.seats)||1);
+        return Object.assign({},p,updates);
+      });
+    });
+  };
+  const applyTemplate = function(i,tpl) {
+    setProfiles(function(ps){
+      return ps.map(function(pr,idx){
+        if(idx!==i) return pr;
+        return Object.assign({},pr,{name:tpl.label,icon:tpl.icon,desc:tpl.desc,turnoverPct:Number(tpl.turnoverPct)||10,avgTenure:tpl.avgTenure||"12mo",growth:Number(tpl.growth)||0});
+      });
+    });
+  };
+  const setNumProfiles = function(n) {
+    setProfiles(function(ps) {
+      if(n>ps.length) return ps.concat(Array.from({length:n-ps.length},function(_,i){return makeProfile(TEMPLATES[Math.min(ps.length+i,8)],ps.length+i);}));
+      return ps.slice(0,n);
+    });
+  };
+
+  const handleContactNext = async function() {
+    const errs = {};
+    if(!contact.name.trim())    errs.name="Name is required.";
+    if(!contact.company.trim()) errs.company="Company name is required.";
+    const ev = validateEmail(contact.email);
+    if(!ev.ok){errs.email=ev.msg;setErrors(errs);return;}
+    if(Object.keys(errs).length){setErrors(errs);return;}
+    setErrors({});setEmailChk(true);
+    const mxOk = await checkDomainMX(ev.domain);
+    setEmailChk(false);
+    if(!mxOk){setErrors({email:"We couldn't verify that email domain. Please check your work email."});return;}
+    handleCalculate();
+  };
+
+  const handleCalculate = async function() {
+    setLoading(true);
+    const pr = profiles.map(function(p){
+      return Object.assign({},calcProfile(p),{name:p.name,icon:p.icon,color:p.color,turnoverPct:p.turnoverPct,avgTenure:p.avgTenure,copilotSeats:p.copilotSeats});
+    });
+    const con = {
+      totalSeats:      pr.reduce(function(a,r){return a+r.seats;},0),
+      totalAllAnnual:  pr.reduce(function(a,r){return a+r.totalAllAnnual;},0),
+      totalOptimal:    pr.reduce(function(a,r){return a+r.totalOptimal;},0),
+      totalSavings:    pr.reduce(function(a,r){return a+r.netSavings;},0),
+    };
+    const payload = {
+      timestamp:new Date().toISOString(),source:"TrustDigital Licensing Intelligence Tool",contact,
+      profiles:profiles.map(function(p){return {name:p.name,seats:p.seats,turnoverPct:p.turnoverPct,avgTenure:p.avgTenure,requestedFeatures:p.selectedFeatures,determinedSKU:determineLicensing(p.selectedFeatures, p.seats).base,hasCopilot:p.selectedFeatures.includes("copilot"),copilotSeats:p.copilotSeats};}),
+      consolidated:{totalSeats:con.totalSeats,totalAllAnnual:fmt(con.totalAllAnnual),totalSavings:fmt(con.totalSavings)},
+    };
+    var emailHTML = buildEmailHTML(contact, pr, con, wantsHRForm, buildHRText(contact,profiles));
+    payload.emailHTML = emailHTML;
+    payload.wantsHRForm = wantsHRForm;
+    if(wantsHRForm){ payload.hrTemplate = buildHRText(contact,profiles); }
+    payload.msLearnLinks = pr.map(function(r){
+      return {group:r.name, links:(r.lic.driverFeatures||[]).concat(r.lic.bonusFeatures||[]).map(function(f){
+        var doc = FEATURE_DOCS[f]; return doc ? {feature:f,label:doc.label,url:doc.url} : null;
+      }).filter(Boolean)};
+    });
+    try{await window.storage.set("lead:"+Date.now()+":"+contact.email.replace(/[@.]/g,"_"),JSON.stringify(payload),true);}catch(e){}
+    try{await fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),});}catch(e){}
+    await new Promise(function(r){setTimeout(r,700);});
+    setResults({profiles:pr,consolidated:con});
+    setLoading(false);setStep(4);setActiveTab("report");
+  };
+
+  const reportText = useMemo(function(){return results?buildReportText(contact,profiles,results):"";}, [contact,profiles,results]);
+  const hrText     = useMemo(function(){return buildHRText(contact,profiles);}, [contact,profiles]);
+  const dominantSku = useMemo(function(){
+    if(!results) return "";
+    const counts = {bp:0,e3:0,e5:0};
+    results.profiles.forEach(function(r){if(counts[r.lic.base]!==undefined) counts[r.lic.base]+=r.seats;});
+    return SKUS[Object.keys(counts).reduce(function(a,b){return counts[a]>counts[b]?a:b;})].shortName;
+  }, [results]);
+
+  // ── STEP 0 ──
+  if(step===0) {
+    return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
+      el(NavBar,null),
+      el("div",{style:{maxWidth:860,margin:"0 auto",padding:"52px 20px 56px"}},
+        el("div",{style:{display:"flex",justifyContent:"center",marginBottom:22}},
+          el("div",{style:{display:"inline-flex",alignItems:"center",gap:7,background:C.tealBg,border:"1px solid "+C.teal+"44",borderRadius:99,padding:"5px 14px",fontSize:10,color:C.teal,fontWeight:700,letterSpacing:"0.12em"}},
+            el("span",{style:{width:6,height:6,borderRadius:"50%",background:C.teal,boxShadow:"0 0 8px "+C.teal,display:"inline-block"}}),"MICROSOFT LICENSING INTELLIGENCE"
+          )
+        ),
+        el("div",{style:{textAlign:"center",marginBottom:44}},
+          el("h1",{style:{fontSize:42,fontWeight:900,lineHeight:1.1,marginBottom:16,letterSpacing:"-0.02em"}},
+            "Stop guessing what your",el("br"),
+            el("span",{style:{background:"linear-gradient(135deg,"+C.teal+","+C.blue+")",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}},"Microsoft licenses should cost")
+          ),
+          el("p",{style:{fontSize:15,color:C.textSecondary,maxWidth:580,margin:"0 auto 24px",lineHeight:1.75}},
+            "Get a straight answer on what your teams need, what you're overpaying for, and what to do about it."
+          ),
+          el(Btn,{variant:"teal",onClick:function(){setStep(1);},style:{fontSize:14,padding:"13px 40px"}},"Get My Free Licensing Report"),
+          el("div",{style:{marginTop:11,color:C.textMuted,fontSize:12}},"Free \u00b7 Instant results \u00b7 No account needed"),
+          el("div",{style:{marginTop:12}},
+            el("a",{href:"#td-sample",onClick:function(e){e.preventDefault();var s=document.getElementById("td-sample");if(s)s.scrollIntoView({behavior:"smooth",block:"start"});},style:{color:C.teal,fontSize:12,fontWeight:700,cursor:"pointer",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:5,opacity:0.85}},"\u2193 See a sample report first")
+          )
+        ),
+        el("div",{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:44}},
+          PROP_CARDS.map(function(c){
+            return el("div",{key:c.title,style:{background:C.bgCard,border:"1px solid "+C.border,borderRadius:10,padding:"18px 16px"}},
+              el("div",{style:{fontSize:22,marginBottom:9}},c.icon),
+              el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:13,marginBottom:6}},c.title),
+              el("div",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.6}},c.desc)
+            );
+          })
+        ),
+        el("div",{id:"td-sample",style:{textAlign:"center",marginBottom:20}},
+          el("div",{style:{color:C.textMuted,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:8}},"Sample Report Output"),
+          el("div",{style:{color:C.textPrimary,fontSize:20,fontWeight:800,lineHeight:1.3,marginBottom:10}},"This is what you get when you work with a true ",el("span",{style:{background:"linear-gradient(135deg,"+C.teal+","+C.blue+")",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",filter:"drop-shadow(0 0 8px "+C.teal+"99)"}},"Value Added")," Reseller."),
+          el("div",{style:{color:C.textSecondary,fontSize:13,lineHeight:1.65,maxWidth:580,margin:"0 auto"}},"One card per user group. Honest license recommendation, payment structure breakdown, ghost seat waste in real dollars, and the caveats that don't show up on Microsoft's pricing pages. Whether you're already a TrustDigital customer or just making sense of your M365 spend — built for your org, not the other way around.")
+        ),
+        el("div",{style:{background:C.bgCard,border:"1px solid "+C.border,borderRadius:14,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.4)"}},
+          el("div",{style:{background:"linear-gradient(135deg,#0D2A1A,#0D2040)",borderBottom:"1px solid "+C.teal+"33",padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}},
+            el("div",{style:{display:"flex",alignItems:"center",gap:12}},
+              el("div",{style:{fontSize:20}},"💼"),
+              el("div",null,
+                el("div",{style:{color:C.blue,fontWeight:800,fontSize:14}},"Sales / Business Dev"),
+                el("div",{style:{color:C.textSecondary,fontSize:11}},"28 seats · 28% annual turnover · avg leaver tenure 6 months")
+              )
+            ),
+            el("div",{style:{background:"rgba(74,222,128,0.15)",border:"1px solid "+C.green+"55",borderRadius:8,padding:"8px 16px",textAlign:"center"}},
+              el("div",{style:{color:C.green,fontSize:20,fontWeight:900,lineHeight:1}},"$4.2K"),
+              el("div",{style:{color:C.textSecondary,fontSize:9,marginTop:2,textTransform:"uppercase",letterSpacing:"0.08em"}},"Est. savings / yr")
+            )
+          ),
+          el("div",{style:{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}},
+            el("div",{style:{background:C.teal+"0C",border:"1px solid "+C.teal+"33",borderRadius:8,padding:"12px 14px"}},
+              el("div",{style:{color:C.teal,fontWeight:800,fontSize:13,marginBottom:7}},"Recommended: Microsoft 365 E3"),
+              el("div",{style:{display:"flex",flexDirection:"column",gap:5}},
+                el("div",{style:{display:"flex",gap:7,alignItems:"flex-start"}},
+                  el("span",{style:{color:C.teal,fontSize:11,marginTop:1}},"->"),
+                  el("span",{style:{color:C.textSecondary,fontSize:12}},"Required for: Data Loss Prevention across Teams, SharePoint, and OneDrive")
+                ),
+                el("div",{style:{display:"flex",gap:7,alignItems:"flex-start"}},
+                  el("span",{style:{color:C.green,fontSize:11,marginTop:1}},"✓"),
+                  el("span",{style:{color:C.textSecondary,fontSize:12}},"Also included at no extra cost: Windows 11 Enterprise, eDiscovery Standard, Intune MDM")
+                )
+              )
+            ),
+            el("div",{style:{background:"rgba(100,255,218,0.03)",border:"1px solid "+C.teal+"22",borderRadius:8,padding:"12px 14px"}},
+              el("div",{style:{color:C.teal,fontWeight:800,fontSize:12,marginBottom:8}},"Hybrid split recommended: annual seats for stable headcount, M2M for high-churn seats"),
+              el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}},
+                el("div",{style:{background:C.bgDeep,borderRadius:7,padding:"10px 12px",textAlign:"center",border:"1px solid "+C.border}},
+                  el("div",{style:{color:C.textSecondary,fontSize:9,textTransform:"uppercase",marginBottom:3}},"All Annual"),
+                  el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:15}},"$15.6K / yr"),
+                  el("div",{style:{color:C.textMuted,fontSize:9,marginTop:2}},"28 seats locked for 12 months")
+                ),
+                el("div",{style:{background:"rgba(74,222,128,0.10)",borderRadius:7,padding:"10px 12px",textAlign:"center",border:"2px solid "+C.green}},
+                  el("div",{style:{color:C.green,fontSize:9,fontWeight:800,textTransform:"uppercase",marginBottom:3}},"✓ Optimized"),
+                  el("div",{style:{color:C.green,fontWeight:800,fontSize:15}},"$11.4K / yr"),
+                  el("div",{style:{color:C.textMuted,fontSize:9,marginTop:2}},"20 annual + 8 M2M")
+                )
+              ),
+              el("div",{style:{padding:"8px 10px",background:"rgba(251,146,60,0.07)",borderRadius:6,fontSize:11,color:C.textSecondary,lineHeight:1.55}},
+                el("span",{style:{color:C.orange,fontWeight:700}},"👻 Ghost waste identified: "),
+                "$4.2K/yr in prepaid annual seats sitting empty after departure. 8 high-churn seats averaged 6 months before leaving, generating 6 months of zero-value spend per seat."
+              )
+            ),
+            el("div",{style:{background:"rgba(251,146,60,0.04)",border:"1px solid "+C.orange+"22",borderRadius:8,padding:"10px 14px"}},
+              el("div",{style:{color:C.orange,fontWeight:700,fontSize:11,marginBottom:6}},"What E3 does not include: know this before you sign"),
+              SAMPLE_CAVEATS.map(function(g,i){
+                return el("div",{key:i,style:{display:"flex",gap:6,marginBottom:i<2?5:0}},
+                  el("span",{style:{color:C.orange,fontSize:10,flexShrink:0,marginTop:2}},"•"),
+                  el("span",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.45}},g)
+                );
+              })
+            )
+          ),
+          el("div",{style:{borderTop:"1px solid "+C.border,padding:"14px 20px",background:C.bgDeep,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
+            el("div",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.55,maxWidth:480}},
+              "Your report gives you this for every user group you define, plus a ",
+              el("strong",{style:{color:C.textPrimary}},"consolidated savings total"),
+              ", a ",
+              el("strong",{style:{color:C.textPrimary}},"3-year projection"),
+              ", and a ready-to-send ",
+              el("strong",{style:{color:C.textPrimary}},"HR data request template"),
+              " to verify your numbers."
+            ),
+            el("button",{onClick:function(){setStep(1);},style:{background:"linear-gradient(135deg,"+C.tealDim+","+C.blue+")",color:C.bgDeep,border:"none",borderRadius:7,padding:"10px 22px",fontWeight:800,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}},"Build My Report")
+          )
+        )
+      ),
+      el(Footer,null)
+    );
+  }
+
+  // ── STEP 3 ── contact gate
+  if(step===3) {
+    const previewResults = profiles.map(calcProfile);
+    const previewTotalSeats = previewResults.reduce(function(a,r){return a+r.seats;},0);
+    const previewTotalAnnual = previewResults.reduce(function(a,r){return a+r.totalAllAnnual;},0);
+    const previewSavings = previewResults.reduce(function(a,r){return a+r.netSavings;},0);
+    return el(Wrap,{maxWidth:600},
+      el(ProgBar,{step:profiles.length+1,total:profiles.length+2}),
+      el("div",{style:{textAlign:"center",marginBottom:20}},
+        el("div",{style:{display:"inline-flex",alignItems:"center",gap:7,background:C.tealBg,border:"1px solid "+C.teal+"44",borderRadius:99,padding:"4px 14px",fontSize:10,color:C.teal,fontWeight:700,letterSpacing:"0.1em",marginBottom:12}},"ANALYSIS COMPLETE"),
+        el("h2",{style:{fontSize:24,fontWeight:900,marginBottom:8,lineHeight:1.2}},"Your licensing analysis is ready."),
+        el("p",{style:{color:C.textSecondary,fontSize:13,lineHeight:1.6,maxWidth:460,margin:"0 auto"}},"We\u2019ve mapped "+profiles.length+" group"+(profiles.length>1?"s":"")+" across "+previewTotalSeats+" seats to the right license tier and payment structure. Here\u2019s a preview:")
+      ),
+      el("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:16}},
+        previewResults.map(function(r,i){
+          const p = profiles[i];
+          const pv = paymentVerdict(p.turnoverPct, p.avgTenure);
+          return el("div",{key:i,style:{background:C.bgCard,border:"1px solid "+r.sku.color+"33",borderRadius:9,padding:"12px 14px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            el("div",{style:{width:36,height:36,borderRadius:7,background:r.sku.color+"14",border:"1px solid "+r.sku.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}},p.icon),
+            el("div",{style:{flex:1,minWidth:120}},
+              el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:13}},p.name),
+              el("div",{style:{color:C.textMuted,fontSize:11,marginTop:1}},r.seats+" seats \u00b7 "+r.sku.shortName)
+            ),
+            el("div",{style:{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}},
+              el("div",{style:{background:pv.color+"18",border:"1px solid "+pv.color+"33",borderRadius:5,padding:"2px 9px",fontSize:10,fontWeight:700,color:pv.color}},pv.badge),
+              r.netSavings>0 ? el("div",{style:{background:"rgba(74,222,128,0.12)",border:"1px solid "+C.green+"44",borderRadius:5,padding:"2px 9px",fontSize:10,fontWeight:700,color:C.green}},"💰 "+fmtK(r.netSavings)+" savings/yr") : null
+            )
+          );
+        })
+      ),
+      el("div",{style:{background:"linear-gradient(135deg,#0D2A1A,#0D2040)",border:"1px solid "+C.teal+"33",borderRadius:9,padding:"12px 16px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}},
+        el("div",null,
+          el("div",{style:{color:C.textMuted,fontSize:10,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:3}},"Total across all groups"),
+          el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:14}},previewTotalSeats+" seats \u00b7 est. "+fmtK(previewTotalAnnual)+"/yr")
+        ),
+        previewSavings>0 ? el("div",{style:{textAlign:"right"}},
+          el("div",{style:{color:C.textMuted,fontSize:10,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:3}},"Optimization identified"),
+          el("div",{style:{color:C.green,fontWeight:900,fontSize:18}},"\uD83D\uDCB0 "+fmtK(previewSavings)+"/yr")
+        ) : null
+      ),
+      el(Card,null,
+        el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:4}},"Enter your details to generate the full report"),
+        el("div",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5,marginBottom:14}},"Your personalized report includes the complete group-by-group breakdown, exact payment structure recommendations, and a ready-to-use HR data request template."),
+        el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}},
+          el(Inp,{label:"Your Name *",value:contact.name,onChange:function(v){updC("name",v);},placeholder:"Jane Smith",error:errors.name}),
+          el(Inp,{label:"Job Title",value:contact.title,onChange:function(v){updC("title",v);},placeholder:"IT Director / CTO / CFO"})
+        ),
+        el(Inp,{label:"Work Email *",type:"email",value:contact.email,onChange:function(v){updC("email",v);setErrors(function(e){return Object.assign({},e,{email:""});});},placeholder:"jane@yourcompany.com",error:errors.email}),
+        el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}},
+          el(Inp,{label:"Company Name *",value:contact.company,onChange:function(v){updC("company",v);},placeholder:"Acme Corp",error:errors.company}),
+          el(Inp,{label:"Phone (optional)",type:"tel",value:contact.phone,onChange:function(v){updC("phone",v);},placeholder:"(555) 000-0000"})
+        ),
+        el("div",{style:{background:"rgba(100,255,218,0.05)",border:"1px solid "+C.teal+"22",borderRadius:7,padding:"8px 12px",fontSize:11,color:C.teal,marginBottom:10}},"Used only to personalize your report and connect you with a TrustDigital specialist. No spam.")
+      ),
+      el("div",{style:{background:"rgba(91,147,199,0.07)",border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer"},
+          onClick:function(){setWantsHRForm(function(v){return !v;})}},
+        el("div",{style:{width:16,height:16,borderRadius:4,border:"2px solid "+(wantsHRForm?C.teal:C.borderBright),background:wantsHRForm?"rgba(100,255,218,0.15)":"transparent",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center"}},
+          wantsHRForm ? el("span",{style:{color:C.teal,fontSize:11,fontWeight:900,lineHeight:1}},"\u2713") : null
+        ),
+        el("div",null,
+          el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:2}},"Send me the HR Data Request Template too"),
+          el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.5}},"Pre-filled with your group estimates. Useful for confirming turnover and offboarding numbers internally before finalizing.")
+        )
+      ),
+      el("div",{style:{display:"flex",justifyContent:"space-between",marginTop:14,alignItems:"center"}},
+        el(Btn,{variant:"ghost",onClick:function(){setProfIdx(profiles.length-1);setStep(2);}},"Back"),
+        el(Btn,{variant:"teal",onClick:handleContactNext,disabled:emailChk||loading,style:{fontSize:14,padding:"12px 32px"}},loading?"Building your report...":emailChk?"Verifying...":"Get My Report \u2192")
+      )
+    );
+  }
+
+  // ── STEP 1 ── select teams (multi-select)
+  if(step===1) {
+    var canContinue1 = selectedTpls.length > 0;
+    var toggleTpl = function(label) {
+      setSelectedTpls(function(prev){
+        return prev.includes(label) ? prev.filter(function(x){return x!==label;}) : prev.concat([label]);
+      });
+    };
+    var goStep2 = function() {
+      if(!canContinue1) return;
+      setProfiles(selectedTpls.map(function(label,idx){
+        return makeProfile(TEMPLATES.find(function(t){return t.label===label;})||TEMPLATES[8], idx);
+      }));
+      setProfIdx(0); setSubStep(0); setAnimDir('fwd'); setStep(2);
+    };
+    return el(Wrap,{maxWidth:680},
+      el(ProgBar,{step:0,total:3}),
+      el("div",{style:{textAlign:"center",paddingTop:36,paddingBottom:20}},
+        el("h2",{style:{fontSize:28,fontWeight:900,marginBottom:10,letterSpacing:"-0.02em",lineHeight:1.2}},"What teams are we planning for?"),
+        el("p",{style:{color:C.textSecondary,fontSize:14,lineHeight:1.7,maxWidth:460,margin:"0 auto 28px"}},"Select all that apply. Each team gets its own license recommendation and cost breakdown.")
+      ),
+      el("div",{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:28}},
+        TEMPLATES.map(function(t){
+          var sel = selectedTpls.includes(t.label);
+          return el("button",{
+            key:t.label,
+            onClick:function(){toggleTpl(t.label);},
+            style:{padding:"16px 10px",borderRadius:10,border:"2px solid "+(sel?C.teal:C.border),background:sel?C.tealBg:"transparent",cursor:"pointer",textAlign:"center",transition:"all .15s",display:"flex",flexDirection:"column",alignItems:"center",gap:5,position:"relative"}
+          },
+            sel ? el("div",{style:{position:"absolute",top:7,right:8,width:17,height:17,borderRadius:"50%",background:C.teal,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.bg,fontWeight:900}},"\u2713") : null,
+            el("div",{style:{fontSize:26}},t.icon),
+            el("div",{style:{color:sel?C.teal:C.textPrimary,fontWeight:700,fontSize:12,lineHeight:1.3}},t.label),
+            el("div",{style:{color:C.textMuted,fontSize:10,lineHeight:1.4}},t.desc)
+          );
+        })
+      ),
+      el("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+        el(Btn,{variant:"ghost",onClick:function(){setStep(0);}},"Back"),
+        el("div",{style:{display:"flex",alignItems:"center",gap:14}},
+          canContinue1 ? el("span",{style:{color:C.textMuted,fontSize:12}},selectedTpls.length+" team"+(selectedTpls.length!==1?"s":"")+" selected") : null,
+          el("button",{
+            onClick:goStep2,
+            style:{background:canContinue1?"linear-gradient(135deg,"+C.tealDim+","+C.blue+")":C.border,color:canContinue1?C.bg:C.textMuted,border:"none",borderRadius:8,padding:"12px 28px",fontWeight:800,fontSize:14,cursor:canContinue1?"pointer":"not-allowed",transition:"all .2s"}
+          },"Configure each team \u2192")
+        )
+      )
+    );
+  }
+
+  // ── STEP 2 ── configure groups (6 screens each, Typeform-style)
+  if(step===2) {
+    var p2 = profiles[profIdx];
+    var col2 = p2.color;
+    var isLastGroup = profIdx===profiles.length-1;
+    var seats2 = Math.max(1, Number(p2.seats)||1);
+    var liveReq2 = determineLicensing(p2.selectedFeatures, seats2);
+    var liveSku2 = SKUS[liveReq2.base];
+    var liveCalc2 = calcProfile(p2);
+    var livePay2 = liveCalc2.pay;
+    var liveVerdict2 = paymentVerdict(p2.turnoverPct, p2.avgTenure);
+    var totalMicro = profiles.length * 6 + 2;
+    var doneMicro  = 2 + profIdx * 6 + subStep;
+    var pct2 = Math.round(doneMicro / totalMicro * 100);
+    var churned2 = Math.round(seats2 * p2.turnoverPct / 100);
+    var ghostMonths2 = Math.max(0, 12 - tenureMonths(p2.avgTenure));
+
+    var goNext2 = function() {
+      setAnimDir('fwd');
+      if(subStep < 5) { setSubStep(subStep+1); }
+      else if(!isLastGroup) { setProfIdx(function(i){return i+1;}); setSubStep(0); }
+      else { setStep(3); }
+    };
+    var goBack2 = function() {
+      setAnimDir('bwd');
+      if(subStep > 0) { setSubStep(subStep-1); }
+      else if(profIdx > 0) { setProfIdx(function(i){return i-1;}); setSubStep(5); }
+      else { setStep(1); }
+    };
+
+    var animCls2 = animDir==='fwd' ? 'q-r' : 'q-l';
+    var animKey2 = profIdx+'-'+subStep;
+
+    var qLayout = function(content2, opts2) {
+      var o = opts2 || {};
+      var nextBtnEl = o.nextBtn || el(Btn,{variant:'teal',onClick:goNext2,style:{fontSize:14,padding:'11px 28px'}},o.nextLabel||'Continue \u2192');
+      return el('div',{style:{background:C.bg,minHeight:'100vh',color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:'flex',flexDirection:'column'}},
+        el(NavBar,null),
+        el('div',{style:{height:3,background:C.border}},
+          el('div',{style:{height:'100%',width:pct2+'%',background:'linear-gradient(90deg,'+C.tealDim+','+C.teal+')',transition:'width .6s ease'}})
+        ),
+        el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 24px 0',maxWidth:700,margin:'0 auto',width:'100%'}},
+          el('span',{style:{color:C.teal,fontSize:12,fontWeight:700}},pct2+'% complete'),
+          el('span',{style:{color:C.textMuted,fontSize:11}},(profiles.length>1?'Group '+(profIdx+1)+' of '+profiles.length+' \u00b7 ':'')+p2.icon+' '+p2.name)
+        ),
+        el('div',{style:{flex:1,maxWidth:700,margin:'0 auto',width:'100%',padding:'40px 24px 110px',display:'flex',flexDirection:'column',justifyContent:'center'}},
+          el('div',{className:animCls2,key:animKey2},content2)
+        ),
+        el('div',{style:{position:'fixed',bottom:0,left:0,right:0,background:C.bgDeep,borderTop:'1px solid '+C.border,padding:'12px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',zIndex:50}},
+          el('button',{onClick:goBack2,style:{background:'transparent',border:'none',color:C.textMuted,fontSize:12,cursor:'pointer',padding:'6px 4px'}},'\u2190 Back'),
+          el('div',{style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}},
+            nextBtnEl,
+            o.hideEnter ? null : el('span',{style:{color:C.textMuted,fontSize:10}},'or press Enter \u21b5')
+          )
+        )
+      );
+    };
+
+    if(subStep===0) {
+      var isCustomGrp = p2.name==='Custom / Other' || !TEMPLATES.slice(0,8).find(function(t){return t.label===p2.name;});
+      var nameVal0 = (isCustomGrp && p2.name==='Custom / Other') ? '' : p2.name;
+      var nameOk0 = nameVal0.trim().length > 0;
+      var hEname0 = function(e){if(e.key==='Enter' && nameOk0) goNext2();};
+      return qLayout(
+        el('div',{style:{textAlign:'center'}},
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:16}},'Group '+(profIdx+1)+' of '+profiles.length),
+          el('div',{style:{fontSize:56,marginBottom:12}},p2.icon),
+          el('h1',{style:{fontSize:30,fontWeight:900,lineHeight:1.2,marginBottom:10,letterSpacing:'-0.02em'}},
+            isCustomGrp ? 'What do you call this group?' : 'Up next: '+p2.name
+          ),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:28,maxWidth:400,margin:'0 auto 28px'}},
+            isCustomGrp
+              ? 'Give this group a name so your results are labeled clearly.'
+              : 'We\u2019ve pre-filled typical defaults for this team. You\u2019ll confirm or adjust each one on the next screens. Rename below if needed.'
+          ),
+          el('input',{
+            autoFocus:true,
+            value:nameVal0,
+            placeholder:isCustomGrp ? 'e.g. Warehouse Staff, Field Team\u2026' : 'Rename (optional)',
+            onChange:function(e){updP(profIdx,'name',e.target.value||(isCustomGrp?'Custom / Other':p2.name));},
+            onKeyDown:hEname0,
+            style:{width:'100%',maxWidth:360,background:'transparent',border:'none',borderBottom:'2px solid '+(nameOk0?col2:C.border),padding:'10px 0',fontSize:18,fontWeight:700,color:C.textPrimary,outline:'none',textAlign:'center',display:'block',margin:'0 auto'}
+          }),
+          !isCustomGrp ? el('div',{style:{color:C.textMuted,fontSize:11,marginTop:10,textAlign:'center'}},'\u270f\ufe0f This is what we\u2019ll call this group in your report\u2014edit it if your team has a different name for it.') : null
+        ),
+        {
+          nextLabel: isCustomGrp ? 'Got it \u2192' : 'Let\u2019s go \u2192',
+          nextBtn: (isCustomGrp && !nameOk0)
+            ? el('button',{disabled:true,style:{background:C.border,color:C.textMuted,border:'none',borderRadius:8,padding:'11px 28px',fontWeight:800,fontSize:14,cursor:'not-allowed'}},'Got it \u2192')
+            : undefined
+        }
+      );
+    }
+
+    if(subStep===1) {
+      var hE1=function(e){if(e.key==='Enter')goNext2();};
+      return qLayout(
+        el('div',null,
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:10}},p2.icon+' '+p2.name),
+          el('h1',{style:{fontSize:30,fontWeight:900,lineHeight:1.2,marginBottom:10,letterSpacing:'-0.02em'}},'How many people are in this group?'),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:36}},'Seat count determines which license tier applies. Business Premium is capped at 300\u2014we\u2019ll flag it if this group exceeds that.'),
+          el('div',{style:{display:'flex',alignItems:'flex-end',gap:12,marginBottom:20}},
+            el('input',{type:'number',autoFocus:true,min:1,value:p2.seats,
+              onChange:function(e){updP(profIdx,'seats',Math.max(1,Number(e.target.value)||1));},
+              onKeyDown:hE1,
+              style:{width:160,background:'transparent',border:'none',borderBottom:'2px solid '+col2,padding:'6px 0',fontSize:64,fontWeight:900,color:col2,outline:'none',textAlign:'center',lineHeight:1}
+            }),
+            el('span',{style:{color:C.textMuted,fontSize:18,marginBottom:10}},'seats')
+          ),
+          seats2>300
+            ?el('div',{style:{display:'flex',alignItems:'center',gap:8,background:'rgba(251,146,60,0.08)',border:'1px solid '+C.orange+'44',borderRadius:8,padding:'10px 14px',fontSize:12,color:C.orange}},
+                el('span',null,'\u26a0'),el('span',null,'Exceeds the 300-seat Business Premium cap\u2014we\u2019ll map this group to E3 or E5.')
+              )
+            :el('div',{style:{color:C.textMuted,fontSize:12}},'\u2713 Eligible for Business Premium, E3, or E5\u2014we\u2019ll optimize based on your needs.')
+        ),
+        {nextLabel:'Got it \u2192'}
+      );
+    }
+
+    if(subStep===2) {
+      var hE2=function(e){if(e.key==='Enter')goNext2();};
+      return qLayout(
+        el('div',null,
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:10}},p2.icon+' '+p2.name+' \u00b7 '+seats2+' seats'),
+          el('h1',{style:{fontSize:30,fontWeight:900,lineHeight:1.2,marginBottom:10,letterSpacing:'-0.02em'}},'Any planned new hires in the next 12 months?'),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:36}},'Growth seats are factored in separately\u2014we\u2019ll size your commitment to cover them without overpaying up front.'),
+          el('div',{style:{display:'flex',alignItems:'flex-end',gap:12,marginBottom:16}},
+            el('input',{type:'number',autoFocus:true,min:0,value:p2.growth,
+              onChange:function(e){updP(profIdx,'growth',Math.max(0,Number(e.target.value)||0));},
+              onKeyDown:hE2,
+              style:{width:130,background:'transparent',border:'none',borderBottom:'2px solid '+(p2.growth>0?col2:C.border),padding:'6px 0',fontSize:64,fontWeight:900,color:p2.growth>0?col2:C.textMuted,outline:'none',textAlign:'center',lineHeight:1,transition:'color .2s,border-color .2s'}
+            }),
+            el('span',{style:{color:C.textMuted,fontSize:18,marginBottom:10}},'new hires')
+          ),
+          el('button',{onClick:function(){updP(profIdx,'growth',0);goNext2();},
+            style:{color:C.textMuted,fontSize:12,background:'transparent',border:'none',cursor:'pointer',textDecoration:'underline',padding:0}
+          },'None planned\u2014skip \u2192')
+        )
+      );
+    }
+
+    if(subStep===3) {
+      return qLayout(
+        el('div',null,
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:10}},p2.icon+' '+p2.name+' \u00b7 '+seats2+' seats'),
+          el('h1',{style:{fontSize:30,fontWeight:900,lineHeight:1.2,marginBottom:10,letterSpacing:'-0.02em'}},'How often does headcount change?'),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:24}},'This is the single most important input. It determines whether annual licensing or a hybrid structure saves the most money.'),
+          el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:8}},
+            el('span',{style:{color:C.textSecondary,fontSize:13}},'Annual turnover rate'),
+            el('span',{style:{color:col2,fontSize:56,fontWeight:900,lineHeight:1}},p2.turnoverPct+'%')
+          ),
+          el('input',{type:'range',min:3,max:85,step:1,value:p2.turnoverPct,
+            onChange:function(e){updP(profIdx,'turnoverPct',Number(e.target.value));},
+            style:{width:'100%',accentColor:col2,cursor:'pointer',marginBottom:6}
+          }),
+          el('div',{style:{display:'flex',justifyContent:'space-between',color:C.textMuted,fontSize:10,marginBottom:20}},
+            el('span',null,'3% Stable'),el('span',null,'17% Mid'),el('span',null,'85% Extreme')
+          ),
+          el('div',{style:{background:liveVerdict2.color+'0A',border:'1px solid '+liveVerdict2.color+'44',borderRadius:9,padding:'13px 15px'}},
+            el('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
+              el('div',{style:{background:liveVerdict2.color+'18',border:'1px solid '+liveVerdict2.color+'33',borderRadius:4,padding:'2px 9px',fontSize:11,fontWeight:700,color:liveVerdict2.color}},liveVerdict2.badge),
+              el('div',{style:{color:liveVerdict2.color,fontWeight:700,fontSize:13}},liveVerdict2.verdict)
+            ),
+            el('div',{style:{color:C.textSecondary,fontSize:12,lineHeight:1.6}},liveVerdict2.short)
+          )
+        ),
+        {hideEnter:true}
+      );
+    }
+
+    if(subStep===4) {
+      var tenureOpts=[
+        {value:'lt6', label:'Under 6 months',sub:'avg ~4 mo'},
+        {value:'6mo', label:'~6 months',     sub:''},
+        {value:'12mo',label:'~12 months',    sub:''},
+        {value:'24mo',label:'2+ years',      sub:''},
+      ];
+      return qLayout(
+        el('div',null,
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:10}},p2.icon+' '+p2.name),
+          el('h1',{style:{fontSize:30,fontWeight:900,lineHeight:1.2,marginBottom:10,letterSpacing:'-0.02em'}},'When people leave this group, how long were they typically with the company?'),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:24}},'Avg tenure of departing employees affects ghost licensing risk\u2014the empty seats that keep billing after someone leaves.'),
+          el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}},
+            tenureOpts.map(function(opt){
+              var sel=p2.avgTenure===opt.value;
+              return el('button',{key:opt.value,onClick:function(){updP(profIdx,'avgTenure',opt.value);},
+                style:{padding:'16px',borderRadius:10,border:'2px solid '+(sel?col2:C.border),background:sel?col2+'14':'transparent',cursor:'pointer',textAlign:'left',transition:'all .15s'}
+              },
+                el('div',{style:{fontWeight:sel?700:500,fontSize:14,color:sel?col2:C.textPrimary}},opt.label),
+                opt.sub?el('div',{style:{color:C.textMuted,fontSize:11,marginTop:2}},opt.sub):null
+              );
+            })
+          ),
+          churned2>0&&ghostMonths2>0?el('div',{style:{background:'rgba(251,146,60,0.08)',border:'1px solid '+C.orange+'44',borderRadius:8,padding:'11px 14px',fontSize:12}},
+            el('span',{style:{color:C.orange,fontWeight:700}},'Ghost licensing risk: '),
+            el('span',{style:{color:C.textSecondary}},'At '+p2.turnoverPct+'% turnover, ~'+churned2+' seat'+(churned2>1?'s':'')+' churn/year. Each sits empty '+ghostMonths2+' months before refill\u2014we\u2019ll calculate the exact cost in your report.')
+          ):null
+        ),
+        {hideEnter:true}
+      );
+    }
+
+    if(subStep===5) {
+      return qLayout(
+        el('div',null,
+          el('div',{style:{color:col2,fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:10}},p2.icon+' '+p2.name+' \u00b7 '+seats2+' seats'),
+          el('h1',{style:{fontSize:28,fontWeight:900,lineHeight:1.2,marginBottom:8,letterSpacing:'-0.02em'}},'What does this group actually need?'),
+          el('p',{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,marginBottom:20}},'Select every capability required. We\u2019ll map to the right license tier and show you everything else included at no extra cost.'),
+          FEATURE_GROUPS.map(function(fg){
+            return el('div',{key:fg.group,style:{marginBottom:14}},
+              el('div',{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}},fg.icon+' '+fg.group),
+              el('div',{style:{display:'flex',flexDirection:'column',gap:4}},
+                fg.features.map(function(f){
+                  var sel=p2.selectedFeatures.includes(f.id);
+                  return el('div',{key:f.id,onClick:function(){toggleFeature(profIdx,f.id);},
+                    style:{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',borderRadius:8,border:'1px solid '+(sel?col2:C.border),background:sel?col2+'0E':C.bgDeep,cursor:'pointer',transition:'all .15s'}
+                  },
+                    el('div',{style:{width:16,height:16,borderRadius:3,border:'2px solid '+(sel?col2:C.border),background:sel?col2:'transparent',flexShrink:0,marginTop:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:C.bgDeep,fontWeight:900}},sel?'\u2713':''),
+                    el('div',null,
+                      el('div',{style:{color:sel?C.textPrimary:C.textSecondary,fontSize:12,fontWeight:sel?700:400,lineHeight:1.3}},f.label),
+                      el('div',{style:{color:C.textMuted,fontSize:10,lineHeight:1.35,marginTop:2}},f.desc),
+                      f.comp?el('div',{style:{color:C.tealDim,fontSize:9,fontWeight:600,marginTop:3,letterSpacing:'0.02em'}},f.comp):null
+                    )
+                  );
+                })
+              )
+            );
+          }),
+          p2.selectedFeatures.includes('copilot')?el(Card,{style:{marginBottom:10,borderColor:C.yellow+'44',marginTop:10}},
+            el(SLabel,{color:C.yellow},'Copilot Seats'),
+            el('p',{style:{color:C.textSecondary,fontSize:12,marginTop:3,marginBottom:6,lineHeight:1.45}},
+              liveReq2.base==='bp'?'Copilot Business \u2014 $21/user/mo (SMB, \u2264300 seats). Can be a subset of the group.':'Microsoft 365 Copilot \u2014 $30/user/mo (enterprise). Can be a subset of the group.'
+            ),
+            el('div',{style:{background:'rgba(252,211,77,0.07)',border:'1px solid '+C.yellow+'33',borderRadius:6,padding:'8px 11px',marginBottom:10,fontSize:11,color:C.textSecondary,lineHeight:1.55}},
+              el('span',{style:{color:C.yellow,fontWeight:700}},'\u2713 Copilot prereqs are covered: '),
+              'Sensitivity labels and Intune compliance\u2014both required for safe Copilot deployment\u2014are included in BP, E3, and E5. No Full Purview Suite (E5) needed.'
+            ),
+            el(Inp,{label:'Seats needing Copilot',type:'number',value:p2.copilotSeats,onChange:function(v){updP(profIdx,'copilotSeats',Math.min(Math.max(0,Number(v)||0),seats2));},placeholder:'e.g. 5'})
+          ):null,
+          el('div',{style:{background:liveSku2.color+'08',border:'1px solid '+liveSku2.color+'44',borderRadius:9,padding:'13px 15px',marginTop:14}},
+            el('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:liveReq2.driverFeatures.length>0||liveReq2.bonusFeatures.length>0?8:0}},
+              el('div',{style:{fontSize:18}},'\uD83C\uDFAF'),
+              el('div',null,
+                el('span',{style:{color:liveSku2.color,fontWeight:800,fontSize:14}},liveSku2.displayName),
+                p2.selectedFeatures.includes('copilot')?el('span',{style:{color:C.yellow,fontSize:10,fontWeight:700,background:C.yellow+'14',padding:'1px 6px',borderRadius:3,marginLeft:6}},'+Copilot'):null
+              )
+            ),
+            liveReq2.driverFeatures.length>0?el('div',{style:{marginBottom:6}},
+              el('div',{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}},'Required for:'),
+              liveReq2.driverFeatures.map(function(f){
+                return el('div',{key:f,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:3}},
+                  el('span',{style:{color:liveSku2.color,fontSize:11,flexShrink:0}},'\u2192'),
+                  el('span',{style:{color:C.textSecondary,fontSize:12}},(ALL_FEATURES.find(function(x){return x.id===f;})||{label:f}).label)
+                );
+              })
+            ):null,
+            liveReq2.bonusFeatures.length>0?el('div',null,
+              el('div',{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}},'Also included at no extra cost:'),
+              liveReq2.bonusFeatures.slice(0,3).map(function(f){
+                var feat=ALL_FEATURES.find(function(x){return x.id===f;});
+                if(!feat)return null;
+                return el('div',{key:f,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:3}},
+                  el('span',{style:{color:C.green,fontSize:11,flexShrink:0}},'\u2713'),
+                  el('span',{style:{color:C.textSecondary,fontSize:12}},feat.label)
+                );
+              })
+            ):el('div',{style:{color:C.textSecondary,fontSize:12}},liveSku2.shortName+' covers all selected capabilities for this group.'),
+            el('div',{style:{color:C.textMuted,fontSize:11,marginTop:8}},fmtRate(liveSku2.monthly_annual)+'/seat/mo annual \u00b7 '+fmtRate(liveSku2.monthly_m2m)+'/seat/mo M2M')
+          )
+        ),
+        {
+          hideEnter:true,
+          nextBtn:isLastGroup
+            ?el(Btn,{variant:'teal',onClick:goNext2,style:{fontSize:14,padding:'11px 28px'}},'\u2192 Review & Enter Your Details')
+            :el(Btn,{variant:'teal',onClick:goNext2,style:{fontSize:14,padding:'11px 28px'}},'Next Group: '+profiles[profIdx+1].name+' \u2192')
+        }
+      );
+    }
+  }
+
+  // ── STEP 4 ──
+  if(step===4 && results) {
+    const con = results.consolidated;
+    const tabBtn = function(id,label) {
+      return el("button",{key:id,onClick:function(){setActiveTab(id); window.scrollTo({top:0,behavior:"smooth"});},style:{padding:"7px 13px",borderRadius:6,fontWeight:700,fontSize:12,cursor:"pointer",border:"1px solid "+(activeTab===id?C.teal:C.border),background:activeTab===id?C.tealBg:"transparent",color:activeTab===id?C.teal:C.textSecondary,transition:"all .15s"}},label);
+    };
+
+    const mainContent = el("div",{style:{flex:1,minWidth:0,paddingBottom:80}},
+      el("div",{style:{background:"linear-gradient(135deg,#0D2A1A,#0D2040)",border:"1px solid "+C.teal+"33",borderRadius:11,padding:"16px 20px",marginBottom:16}},
+        el("div",{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,textAlign:"center"}},
+          el("div",{key:"sav"},
+            el("div",{style:{color:C.green,fontSize:22,fontWeight:900,lineHeight:1}},fmtK(con.totalSavings)+"/yr"),
+            el("div",{style:{color:C.textSecondary,fontSize:10,marginTop:4}},"Est. Annual Savings")
+          ),
+          el("div",{key:"seats"},
+            el("div",{style:{color:C.textSecondary,fontSize:22,fontWeight:900,lineHeight:1}},con.totalSeats+" seats"),
+            el("div",{style:{color:C.textSecondary,fontSize:10,marginTop:4}},"Total Seats")
+          ),
+          el("div",{key:"proj"},
+            con.totalSavings > 0
+              ? el("div",{style:{color:C.teal,fontSize:22,fontWeight:900,lineHeight:1}},fmtK(con.totalSavings*3))
+              : el("div",{style:{color:C.textSecondary,fontSize:22,fontWeight:900,lineHeight:1}},fmtK(con.totalOptimal*3)),
+            con.totalSavings > 0
+              ? el("div",{style:{color:C.textSecondary,fontSize:10,marginTop:4}},"3-Year Savings Projection")
+              : el("div",{style:{color:C.textSecondary,fontSize:10,marginTop:4}},"3-Year Cost Est.")
+          )
+        )
+      ),
+      el("div",{style:{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}},
+        tabBtn("report","License Report"),
+        tabBtn("utilization","License Utilization"),
+        tabBtn("plan","90-Day Plan"),
+        tabBtn("hr","Downloads"),
+        tabBtn("price","How July 2026 Pricing Affects You"),
+        tabBtn("feedback","Questions & Feedback")
+      ),
+
+      activeTab==="report" ? el("div",null,
+        results.profiles.some(function(r){return r.lic.base==="e3"||r.lic.base==="e5";}) ? el("div",{style:{background:"rgba(252,211,77,0.07)",border:"1px solid "+C.yellow+"44",borderRadius:8,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"flex-start",gap:10}},
+          el("div",{style:{fontSize:16,flexShrink:0}},"📅"),
+          el("div",null,
+            el("div",{style:{color:C.yellow,fontWeight:800,fontSize:12,marginBottom:3}},"July 1, 2026 Price Increase — Lock In Current Rates"),
+            el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.55}},
+              "Microsoft is raising prices on July 1, 2026: ",
+              el("strong",{style:{color:C.textPrimary}},"M365 E3 $36→$39 (+8%)"),
+              " and ",
+              el("strong",{style:{color:C.textPrimary}},"M365 E5 $57→$60 (+5%)"),
+              ". Customers who renew before July 1 lock in current pricing. TrustDigital can help you time your renewal to avoid this increase."
+            )
+          )
+        ) : null,
+        results.profiles.map(function(r,i){
+          const p = profiles[i];
+          const exp = expandedP===i;
+          const sku = r.sku;
+          const pay = r.pay;
+          const pv  = paymentVerdict(p.turnoverPct, p.avgTenure);
+          const altSku = sku.tier<3 ? SKUS[sku.tier===1?"e3":"e5"] : null;
+          const annualWins = pay.recommendation==="annual";
+          return el(Card,{key:i,style:{marginBottom:10,borderColor:r.color+"44",padding:"13px 15px"}},
+            el("div",{onClick:function(){setExpandedP(exp?null:i);},style:{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10}},
+              el("div",{style:{flex:1,minWidth:0}},
+                el("div",{style:{fontWeight:800,fontSize:14,color:r.color}},r.icon+" "+p.name),
+                el("div",{style:{color:C.textSecondary,fontSize:11,marginTop:1}},r.seats+" seats · "+sku.shortName+" · "+fmt(sku.monthly_annual)+"/seat/mo annual")
+              ),
+              el("div",{style:{color:C.textSecondary,fontSize:11,flexShrink:0}},exp?"collapse":"details")
+            ),
+            el("div",{style:{background:sku.color+"0C",border:"1px solid "+sku.color+"33",borderRadius:7,padding:"10px 13px",marginBottom:10}},
+              el("div",{style:{color:sku.color,fontWeight:800,fontSize:13,marginBottom:r.lic.driverFeatures.length>0?6:0}},
+                sku.shortName+(r.lic.driverFeatures.length>0?" is required for:":" covers all selected capabilities for this group.")
+              ),
+              r.lic.driverFeatures.length>0 ? el("div",{style:{display:"flex",flexDirection:"column",gap:3,marginBottom:r.lic.bonusFeatures.length>0?10:0}},
+                r.lic.driverFeatures.map(function(f){
+                  return el("div",{key:f,style:{display:"flex",gap:7,alignItems:"flex-start"}},
+                    el("span",{style:{color:sku.color,fontSize:11,flexShrink:0,marginTop:1}},"->"),
+                    el("span",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.35}},(ALL_FEATURES.find(function(x){return x.id===f;})||{label:f}).label)
+                  );
+                })
+              ) : null,
+              r.lic.bonusFeatures.length>0 ? el("div",null,
+                el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:5}},"Also included at no extra cost:"),
+                el("div",{style:{display:"flex",flexDirection:"column",gap:3}},
+                  r.lic.bonusFeatures.map(function(f){
+                    const feat = ALL_FEATURES.find(function(x){return x.id===f;});
+                    if(!feat) return null;
+                    return el("div",{key:f,style:{display:"flex",gap:7,alignItems:"flex-start"}},
+                      el("span",{style:{color:C.green,flexShrink:0,fontSize:11,marginTop:1}},"✓"),
+                      el("span",{style:{color:C.textSecondary,fontSize:12}},feat.label)
+                    );
+                  })
+                )
+              ) : null
+            ),
+            el("div",{style:{background:pv.color+"0A",border:"1px solid "+pv.color+"33",borderRadius:7,padding:"10px 13px",marginBottom:10}},
+              el("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}},
+                el("div",{style:{color:pv.color,fontWeight:800,fontSize:12}},pv.verdict),
+                el("div",{style:{background:pv.color+"20",border:"1px solid "+pv.color+"44",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,color:pv.color}},pv.badge)
+              ),
+              el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.5,marginBottom:10}},pv.short),
+              el("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+                el("div",{style:{borderRadius:7,padding:"10px 12px",textAlign:"center",background:annualWins?"rgba(74,222,128,0.10)":C.bgDeep,border:annualWins?"2px solid "+C.green:"1px solid "+C.border}},
+                  annualWins ? el("div",{style:{color:C.green,fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}},"Recommended") : null,
+                  el("div",{style:{color:C.textSecondary,fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:3}},"All Annual"),
+                  el("div",{style:{color:annualWins?C.green:C.textPrimary,fontWeight:800,fontSize:16}},fmtK(r.totalAllAnnual)),
+                  el("div",{style:{color:C.textMuted,fontSize:9,marginTop:2}},"/yr · all "+r.seats+" seats locked")
+                ),
+                pay.m2mMakesFinancialSense && pay.recommendedM2m>0
+                  ? el("div",{style:{borderRadius:7,padding:"10px 12px",textAlign:"center",background:"rgba(74,222,128,0.10)",border:"2px solid "+C.green}},
+                      el("div",{style:{color:C.green,fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}},"Recommended"),
+                      el("div",{style:{color:C.textSecondary,fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:3}},"Hybrid Split"),
+                      el("div",{style:{color:C.green,fontWeight:800,fontSize:16}},fmtK(r.totalOptimal)),
+                      el("div",{style:{color:C.textMuted,fontSize:9,marginTop:2}},pay.recommendedAnnual+" annual + "+pay.recommendedM2m+" M2M")
+                    )
+                  : el("div",{style:{borderRadius:7,padding:"10px 12px",textAlign:"center",background:C.bgDeep,border:"1px solid "+C.border,opacity:0.5}},
+                      el("div",{style:{color:C.textSecondary,fontSize:9,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:3}},"Hybrid Split"),
+                      el("div",{style:{color:C.textMuted,fontWeight:700,fontSize:13}},"Not beneficial"),
+                      el("div",{style:{color:C.textMuted,fontSize:9,marginTop:4,lineHeight:1.3}},"Avg tenure "+pay.tenure+" mo exceeds 10-mo break-even. Annual is cheaper.")
+                    )
+              ),
+              r.netSavings>0 ? el("div",{style:{marginTop:8,padding:"6px 10px",background:"rgba(74,222,128,0.06)",borderRadius:5,textAlign:"center"}},
+                el("span",{style:{color:C.green,fontWeight:800,fontSize:12}},"Est. savings: "+fmtK(r.netSavings)+"/yr"),
+                el("span",{style:{color:C.textMuted,fontSize:10}}," · "+fmtK(r.netSavings*3)+" over 3 years")
+              ) : null
+            ),
+            exp ? el("div",{style:{marginTop:4}},
+              pay.ghostWaste>0 && pay.m2mMakesFinancialSense ? el("div",{style:{background:"rgba(251,146,60,0.07)",border:"1px solid "+C.orange+"33",borderRadius:6,padding:"9px 12px",marginBottom:10}},
+                el("div",{style:{color:C.orange,fontWeight:700,fontSize:11,marginBottom:4}},"Ghost Licensing Detail"),
+                el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.5}},
+                  "At "+p.turnoverPct+"% attrition, ~"+pay.churned+" seats churn/yr. At "+pay.tenure+" months avg tenure, each churned seat sits empty for "+pay.ghostMonths+" months: ",
+                  el("strong",{style:{color:C.orange}},fmtK(pay.ghostWaste)+"/yr")," in prepaid waste. Moving "+pay.recommendedM2m+" seats to M2M eliminates it."
+                )
+              ) : null,
+              el("div",{style:{marginBottom:10}},
+                el("div",{style:{color:C.orange,fontWeight:700,fontSize:11,marginBottom:5}},"Caveats for "+sku.shortName),
+                sku.gotchas.map(function(g,j){
+                  return el("div",{key:j,style:{display:"flex",gap:6,marginBottom:3}},
+                    el("span",{style:{color:C.orange,flexShrink:0,fontSize:10,marginTop:1}},"•"),
+                    el("span",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.4}},g)
+                  );
+                })
+              ),
+              altSku && altSku.upgradeNote ? el("div",{style:{background:C.bgDeep,borderRadius:7,padding:"9px 12px",borderLeft:"3px solid "+C.border}},
+                el("div",{style:{color:C.textSecondary,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:4}},"Alternative to consider"),
+                el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.5}},
+                  el("span",{style:{color:altSku.color,fontWeight:700}},altSku.shortName)," — ",altSku.upgradeNote
+                )
+              ) : null
+            ) : null
+          );
+        })
+      ) : null,
+
+      activeTab==="utilization" ? el("div",null,
+        results.profiles.map(function(r,i){
+          var p2u = profiles[i];
+          var sku2u = r.sku;
+          var sel2u = r.lic.driverFeatures;
+          var bon2u = r.lic.bonusFeatures;
+          return el(Card,{key:i,style:{marginBottom:12,borderColor:r.color+"44",padding:"14px 16px"}},
+            el("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:"1px solid "+C.border}},
+              el("div",{style:{fontSize:22}},r.icon),
+              el("div",null,
+                el("div",{style:{fontWeight:800,fontSize:14,color:r.color}},p2u.name),
+                el("div",{style:{color:C.textSecondary,fontSize:12,marginTop:2}},sku2u.shortName+" \u00b7 "+r.seats+" seats \u00b7 "+fmt(sku2u.monthly_annual)+"/seat/mo")
+              )
+            ),
+            sel2u.length>0 ? el("div",{style:{marginBottom:14}},
+              el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:8}},"You indicated this is what your team needs to get their job done:"),
+              el("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+                sel2u.map(function(fid){
+                  var feat=ALL_FEATURES.find(function(x){return x.id===fid;});
+                  var doc=FEATURE_DOCS[fid];
+                  var gf=null; FEATURE_GROUPS.forEach(function(g){g.features.forEach(function(f){if(f.id===fid)gf=f;});});
+                  if(!feat) return null;
+                  return el("div",{key:fid,style:{background:C.bgDeep,borderRadius:7,padding:"9px 12px",display:"flex",gap:10}},
+                    el("span",{style:{color:sku2u.color,fontSize:13,flexShrink:0,marginTop:1}},"\u2192"),
+                    el("div",{style:{flex:1}},
+                      el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:2}},feat.label),
+                      el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.45,marginBottom:gf&&gf.comp?3:0}},gf?gf.desc:feat.label),
+                      gf&&gf.comp?el("div",{style:{color:C.tealDim,fontSize:10,fontWeight:600,marginBottom:doc?3:0}},gf.comp):null,
+                      doc?el("a",{href:doc.url,target:"_blank",rel:"noreferrer",style:{color:C.teal,fontSize:10,fontWeight:700,textDecoration:"none"}},"View on Microsoft Learn \u2197"):null
+                    )
+                  );
+                })
+              )
+            ) : null,
+            bon2u.length>0 ? el("div",null,
+              el("div",{style:{color:C.green,fontWeight:700,fontSize:12,marginBottom:8}},"But your team also gets these features — "+sku2u.shortName+":"),  
+              el("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+                bon2u.map(function(fid){
+                  var feat=ALL_FEATURES.find(function(x){return x.id===fid;});
+                  var doc=FEATURE_DOCS[fid];
+                  var gf=null; FEATURE_GROUPS.forEach(function(g){g.features.forEach(function(f){if(f.id===fid)gf=f;});});
+                  if(!feat) return null;
+                  return el("div",{key:fid,style:{background:"rgba(74,222,128,0.05)",border:"1px solid "+C.green+"22",borderRadius:7,padding:"9px 12px",display:"flex",gap:10}},
+                    el("span",{style:{color:C.green,fontSize:13,flexShrink:0,marginTop:1}},"\u2713"),
+                    el("div",{style:{flex:1}},
+                      el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:2}},feat.label),
+                      el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.45,marginBottom:gf&&gf.comp?3:0}},gf?gf.desc:feat.label),
+                      gf&&gf.comp?el("div",{style:{color:C.tealDim,fontSize:10,fontWeight:600,marginBottom:doc?3:0}},gf.comp):null,
+                      doc?el("a",{href:doc.url,target:"_blank",rel:"noreferrer",style:{color:C.teal,fontSize:10,fontWeight:700,textDecoration:"none"}},"View on Microsoft Learn \u2197"):null
+                    )
+                  );
+                })
+              )
+            ) : null
+          );
+        }),
+        el(Card,{style:{marginTop:6,borderColor:C.teal+"33",background:"rgba(100,255,218,0.03)"}},
+          el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:10}},"What We Do Next"),
+          el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:8,marginBottom:12}},
+            el("div",{style:{background:C.bgDeep,borderRadius:8,padding:"11px 13px"}},el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:11,marginBottom:6}},"\uD83D\uDD0D Licensing Audit"),el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.55}},"We run your Entra ID data against your current license assignments\u2014finding ghost seats, over-licensed users, and tier mismatches within 48 hours.")),
+            el("div",{style:{background:C.bgDeep,borderRadius:8,padding:"11px 13px"}},el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:11,marginBottom:6}},"\uD83D\uDEE1\uFE0F Security & Compliance Tuneup"),el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.55}},"We implement Conditional Access, MFA, and Secure Score improvements\u2014using what\u2019s already in your license. Most orgs use less than 40% of what they\u2019re paying for.")),
+            el("div",{style:{background:C.bgDeep,borderRadius:8,padding:"11px 13px"}},el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:11,marginBottom:6}},"\uD83D\uDCE6 Redundant Tool Review"),el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.55}},"Your M365 plan likely already includes tools you\u2019re paying for separately. We map what\u2019s covered so you can cancel the overlap.")),
+            el("div",{style:{background:C.bgDeep,borderRadius:8,padding:"11px 13px"}},el("div",{style:{color:C.textPrimary,fontWeight:700,fontSize:11,marginBottom:6}},"\uD83E\uDD1D CSP Negotiation & Renewal"),el("div",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.55}},"As a Solutions Partner, we negotiate your annual/M2M split and renewal terms\u2014locking in better rates than list price."))
+          ),
+          el("div",{style:{background:"rgba(100,255,218,0.04)",border:"1px solid "+C.teal+"33",borderRadius:8,padding:"10px 14px",fontSize:11,color:C.textSecondary,lineHeight:1.6}},
+            el("span",{style:{color:C.teal,fontWeight:700}},"Why it matters: "),
+            "Gartner found 92% of Microsoft cloud security incidents in 2024 were caused by misconfigurations\u2014not product failures. The tools to fix them are already in your license."
+          )
+        )
+      ) : null,
+
+            activeTab==="plan" ? el("div",null,
+        el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:8,marginBottom:16}},
+          el("div",{style:{background:"rgba(120,120,180,0.07)",border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px",textAlign:"center"}},
+            el("div",{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}},"Self-Managed"),
+            el("div",{style:{color:C.textPrimary,fontWeight:900,fontSize:22,lineHeight:1}},"~90"),
+            el("div",{style:{color:C.textSecondary,fontSize:11,marginTop:3}},"days to full implementation")
+          ),
+          el("div",{style:{background:C.tealBg,border:"1px solid "+C.teal+"44",borderRadius:8,padding:"10px 14px",textAlign:"center"}},
+            el("div",{style:{color:C.teal,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}},"With TrustDigital"),
+            el("div",{style:{color:C.teal,fontWeight:900,fontSize:22,lineHeight:1}},"~55"),
+            el("div",{style:{color:C.textSecondary,fontSize:11,marginTop:3}},"days to full implementation")
+          )
+        ),
+        PLAN_PHASES.map(function(ph,i){
+          return el(Card,{key:i,style:{marginBottom:12,borderColor:ph.color+"44",padding:0,overflow:"hidden"}},
+            el("div",{style:{background:ph.color+"12",borderBottom:"1px solid "+ph.color+"33",padding:"10px 16px",display:"flex",alignItems:"center",gap:10}},
+              el("div",{style:{background:ph.color,borderRadius:4,padding:"2px 9px",fontSize:10,fontWeight:800,color:C.bgDeep,flexShrink:0}},ph.title)
+            ),
+            el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr"}},
+              el("div",{style:{padding:"14px 16px",borderRight:isMobile?"none":"1px solid "+C.border,borderBottom:isMobile?"1px solid "+C.border:"none"}},
+                el("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}},
+                  el("div",{style:{color:C.textSecondary,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.08em"}},"Self-Managed"),
+                  el("div",{style:{background:C.border,color:C.textMuted,borderRadius:3,padding:"1px 7px",fontSize:9,fontWeight:700}},ph.phase)
+                ),
+                ph.diy.map(function(d,j){
+                  return el("div",{key:j,style:{display:"flex",gap:7,alignItems:"flex-start",marginBottom:7}},
+                    el("span",{style:{color:C.textMuted,flexShrink:0,fontSize:12,marginTop:1}},"•"),
+                    el("span",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.45}},d)
+                  );
+                })
+              ),
+              el("div",{style:{padding:"14px 16px",background:ph.color+"06"}},
+                el("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}},
+                  el("div",{style:{color:ph.color,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.08em"}},"With TrustDigital"),
+                  el("div",{style:{background:ph.color+"22",color:ph.color,borderRadius:3,padding:"1px 7px",fontSize:9,fontWeight:700}},ph.tdPhase)
+                ),
+                ph.td.map(function(d,j){
+                  return el("div",{key:j,style:{display:"flex",gap:7,alignItems:"flex-start",marginBottom:9}},
+                    el("div",{style:{background:ph.color,color:C.bgDeep,borderRadius:3,padding:"1px 6px",fontSize:9,fontWeight:800,whiteSpace:"nowrap",flexShrink:0,marginTop:2}},d.day),
+                    el("span",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.45}},d.text)
+                  );
+                })
+              )
+            ),
+            el("div",{style:{borderTop:"1px solid "+ph.color+"33",padding:"9px 16px",background:ph.color+"08",display:"flex",alignItems:"center",gap:8}},
+              el("span",{style:{color:ph.color,fontSize:14,flexShrink:0}},"->"),
+              el("span",{style:{color:C.textPrimary,fontSize:11,fontWeight:600}},ph.bridge)
+            )
+          );
+        })
+      ) : null,
+
+      activeTab==="hr" ? el("div",null,
+        showHR ? el(HRModal,{template:hrText,onClose:function(){setShowHR(false);}}) : null,
+        el(Card,{style:{marginBottom:12,borderColor:C.teal+"33",background:"rgba(100,255,218,0.04)"}},
+          el("div",{style:{display:"flex",alignItems:"center",gap:10}},
+            el("div",{style:{fontSize:18,flexShrink:0}},"📧"),
+            el("div",{style:{flex:1}},
+              el("div",{style:{color:C.teal,fontWeight:800,fontSize:13}},
+                reportEmailDelivered
+                  ? "Your formatted report has been sent to "+contact.email
+                  : "Your formatted report is on its way to "+contact.email
+              ),
+              el("div",{style:{color:C.textMuted,fontSize:11,marginTop:2}},
+                "The email version is fully formatted. The copy option below is plain text — useful for pasting into a doc or ticket."
+              )
+            )
+          )
+        ),
+        el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}},
+          el(Card,{style:{borderColor:C.teal+"44"}},
+            el("div",{style:{fontSize:20,marginBottom:8}},"📋"),
+            el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:6}},"Full Licensing Intelligence Report"),
+            el("p",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5,marginBottom:14}},"Group-by-group breakdown: license recommendations, payment structure analysis, and savings projections."),
+            el("div",{style:{display:"flex",gap:8}},
+              el("button",{onClick:function(){setShowHR(true);},style:{flex:1,background:"transparent",color:C.teal,border:"1px solid "+C.teal,borderRadius:7,padding:"9px 14px",fontWeight:700,fontSize:11,cursor:"pointer"}},"Preview"),
+              el(CopyButton,{text:reportText,label:"Copy (plain text)",style:{flex:2,border:"1px solid "+C.border,color:C.textSecondary,borderRadius:7,padding:"9px 14px",textAlign:"center",fontSize:11}})
+            )
+          ),
+          el(Card,{style:{borderColor:C.blue+"44"}},
+            el("div",{style:{fontSize:20,marginBottom:8}},"📊"),
+            el("div",{style:{color:C.blue,fontWeight:800,fontSize:14,marginBottom:6}},"HR Data Confirmation Request"),
+            el("p",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5,marginBottom:6}},"Pre-filled with your group estimates. Send to HR to confirm turnover rates, avg tenure, and offboarding process."),
+            el("p",{style:{color:C.textSecondary,fontSize:11,lineHeight:1.4,marginBottom:14}},"Takes HR about 15 minutes to complete."),
+            el("div",{style:{display:"flex",gap:8}},
+              el("button",{onClick:function(){setShowHR(true);},style:{flex:1,background:"transparent",color:C.blue,border:"1px solid "+C.blue,borderRadius:7,padding:"9px 14px",fontWeight:700,fontSize:11,cursor:"pointer"}},"Preview"),
+              el(CopyButton,{text:hrText,label:"Copy",style:{flex:2,border:"1px solid "+C.teal,color:C.teal,borderRadius:7,padding:"9px 14px",textAlign:"center",fontSize:11}})
+            )
+          )
+        )
+      ) : null,
+
+      activeTab==="price" ? el("div",null,
+        el(CountdownClock,null),
+        el(Card,{style:{marginBottom:14,borderColor:C.orange+"44",background:"rgba(251,146,60,0.04)"}},
+          el("div",{style:{display:"flex",alignItems:"flex-start",gap:12,marginBottom:10}},
+            el("div",{style:{fontSize:22,flexShrink:0}},"📈"),
+            el("div",null,
+              el("div",{style:{color:C.orange,fontWeight:900,fontSize:16,marginBottom:4}},"Upcoming: Microsoft 365 Price Increases \u2014 Effective July 1, 2026"),
+              el("div",{style:{color:C.textSecondary,fontSize:13,lineHeight:1.6}},"Microsoft announced price increases for most commercial M365 Business and Enterprise licenses. Your renewal after July 1, 2026 will land at the new rates \u2014 here is what that means for your specific groups.")
+            )
+          ),
+          results.profiles.every(function(r){return r.lic.base==="bp";}) ? el("div",{style:{background:"rgba(74,222,128,0.08)",border:"1px solid "+C.green+"44",borderRadius:8,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}},
+            el("div",{style:{fontSize:16,flexShrink:0}},"✅"),
+            el("div",null,
+              el("div",{style:{color:C.green,fontWeight:700,fontSize:13,marginBottom:2}},"Based on your selections, this increase does not affect you."),
+              el("div",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5}},"Microsoft 365 Business Premium pricing is not changing on July 1, 2026. E3 and E5 are the impacted tiers. The table below is shown for reference.")
+            )
+          ) : null,
+          el("div",{style:{overflowX:"auto"}},
+          el("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:"0 8px",borderTop:"1px solid "+C.border,paddingTop:10,minWidth:360}},
+            el("div",{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",paddingBottom:6}},"Group / SKU"),
+            el("div",{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"right",paddingBottom:6}},"Current/yr"),
+            el("div",{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"right",paddingBottom:6}},"Post-July/yr"),
+            el("div",{style:{color:C.textMuted,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",textAlign:"right",paddingBottom:6}},"Increase"),
+            results.profiles.map(function(r,i){
+              const p = profiles[i];
+              const currentAnnual = r.seats * r.sku.monthly_annual * 12;
+              const newMonthly = JULY_2026_PRICES[r.lic.base].monthly_annual;
+              const newAnnual = r.seats * newMonthly * 12;
+              const diff = newAnnual - currentAnnual;
+              const noChange = diff === 0;
+              return [
+                el("div",{key:"name"+i,style:{borderTop:"1px solid "+C.border,paddingTop:10,paddingBottom:10}},
+                  el("div",{style:{color:r.color,fontWeight:700,fontSize:13}},r.icon+" "+p.name),
+                  el("div",{style:{color:C.textMuted,fontSize:11,marginTop:2}},r.sku.shortName+" \u00b7 "+r.seats+" seats")
+                ),
+                el("div",{key:"cur"+i,style:{borderTop:"1px solid "+C.border,paddingTop:10,paddingBottom:10,textAlign:"right",color:C.textPrimary,fontWeight:600,fontSize:13}},fmtK(currentAnnual)),
+                el("div",{key:"new"+i,style:{borderTop:"1px solid "+C.border,paddingTop:10,paddingBottom:10,textAlign:"right",color:noChange?C.textPrimary:C.orange,fontWeight:700,fontSize:13}},fmtK(newAnnual)),
+                el("div",{key:"inc"+i,style:{borderTop:"1px solid "+C.border,paddingTop:10,paddingBottom:10,textAlign:"right",fontWeight:800,fontSize:13,color:noChange?C.green:C.orange}},
+                  noChange ? "No change" : "+"+fmtK(diff)+" (+"+(Math.round((diff/currentAnnual)*100))+"%)"
+                ),
+              ];
+            }),
+            (function(){
+              const totalCurrent = results.profiles.reduce(function(a,r){return a+r.seats*r.sku.monthly_annual*12;},0);
+              const totalNew = results.profiles.reduce(function(a,r){return a+r.seats*JULY_2026_PRICES[r.lic.base].monthly_annual*12;},0);
+              const totalDiff = totalNew - totalCurrent;
+              const noChange = totalDiff === 0;
+              return [
+                el("div",{key:"tname",style:{borderTop:"2px solid "+C.border,paddingTop:10,color:C.textPrimary,fontWeight:800,fontSize:13}},"Total"),
+                el("div",{key:"tcur",style:{borderTop:"2px solid "+C.border,paddingTop:10,textAlign:"right",color:C.textPrimary,fontWeight:800,fontSize:13}},fmtK(totalCurrent)),
+                el("div",{key:"tnew",style:{borderTop:"2px solid "+C.border,paddingTop:10,textAlign:"right",color:noChange?C.textPrimary:C.orange,fontWeight:800,fontSize:13}},fmtK(totalNew)),
+                el("div",{key:"tinc",style:{borderTop:"2px solid "+C.border,paddingTop:10,textAlign:"right",fontWeight:800,fontSize:13,color:noChange?C.green:C.orange}},
+                  noChange ? "No change" : "+"+fmtK(totalDiff)
+                ),
+              ];
+            })()
+          )
+          ) // close overflowX wrapper
+        ),
+        el(Card,{style:{borderColor:C.teal+"33",background:"rgba(100,255,218,0.03)"}},
+          el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:8}},"How to avoid this increase"),
+          el("div",{style:{color:C.textSecondary,fontSize:13,lineHeight:1.65,marginBottom:10}},"If your agreement renews after July 1, 2026, you\u2019ll move to the new rates. Customers who lock in before that date preserve today\u2019s pricing for the full next term. TrustDigital can confirm your renewal date and negotiate your agreement to keep you at current rates if it applies."),
+          el("button",{onClick:function(){setActiveTab("feedback"); window.scrollTo({top:0,behavior:"smooth"});},style:{background:"linear-gradient(135deg,"+C.tealDim+","+C.blue+")",color:C.bgDeep,border:"none",borderRadius:8,padding:"10px 22px",fontWeight:800,fontSize:13,cursor:"pointer"}},"Schedule Your Renewal Review")
+        )
+      ) : null,
+
+      activeTab==="feedback" ? el("div",null,
+
+        fbSent ? el(Card,{style:{borderColor:C.teal+"44",padding:"32px 24px",textAlign:"center"}},
+          el("div",{style:{fontSize:38,marginBottom:14}},
+            fbContact==="call" ? "\uD83D\uDCDE" : fbContact==="email" ? "\uD83D\uDCE7" : "\u2764\uFE0F"
+          ),
+          el("div",{style:{color:C.teal,fontWeight:900,fontSize:18,marginBottom:10}},"Thank you for taking the time."),
+          el("div",{style:{color:C.textSecondary,fontSize:13,lineHeight:1.7,maxWidth:420,margin:"0 auto 20px"}},
+            "We read every submission \u2014 regardless of whether you\u2019ve requested a follow-up. If something felt off or missing, it helps us improve."
+          ),
+          el("div",{style:{borderTop:"1px solid "+C.border,paddingTop:20,marginTop:4}},
+            el("div",{style:{color:C.textMuted,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:10}},"Curious about more than Microsoft?"),
+            el("a",{href:"https://www.trustdigital.net/linecard",target:"_blank",rel:"noreferrer",
+              style:{display:"inline-block",color:C.blue,fontWeight:700,fontSize:13,textDecoration:"none",
+                border:"1px solid "+C.blue+"55",borderRadius:7,padding:"8px 18px",
+                background:"rgba(123,200,255,0.07)"}},
+              "See all our vendors \u2192")
+          )
+        ) :
+
+        el("div",null,
+
+          el(Card,{style:{marginBottom:12,borderColor:C.teal+"44",background:"rgba(100,255,218,0.04)"}},
+            el("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
+              el("div",{style:{background:C.teal,color:C.bgDeep,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:11,flexShrink:0}},"1"),
+              el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:14}},"How would you like us to follow up?")
+            ),
+            el("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginBottom:fbContact==="call"?14:0}},
+              [{id:"call",  label:"\uD83D\uDCDE  Call me",             desc:"We\u2019ll confirm a time with you"},
+               {id:"email", label:"\uD83D\uDCE7  Email me",           desc:"Hear back within one business day"},
+               {id:"none",  label:"\uD83D\uDCAC  No follow-up needed", desc:"Just wanted to share"}
+              ].map(function(opt){
+                var sel = fbContact===opt.id;
+                return el("button",{key:opt.id,onClick:function(){setFbContact(sel?null:opt.id);},
+                  style:{flex:1,minWidth:130,background:sel?"rgba(100,255,218,0.10)":"rgba(255,255,255,0.03)",
+                    border:"1px solid "+(sel?C.teal+"88":C.border),borderRadius:8,padding:"10px 12px",
+                    cursor:"pointer",textAlign:"left",transition:"all 0.15s"}},
+                  el("div",{style:{color:sel?C.teal:C.textPrimary,fontWeight:700,fontSize:12,marginBottom:2}},opt.label),
+                  el("div",{style:{color:C.textMuted,fontSize:11}},opt.desc)
+                );
+              })
+            ),
+            fbContact==="call" ? el("div",{style:{borderTop:"1px solid "+C.border,paddingTop:12}},
+              el("div",{style:{color:C.textSecondary,fontSize:12,fontWeight:700,marginBottom:8}},
+                "What days work for you?",el("span",{style:{color:C.textMuted,fontWeight:400,fontSize:11}}," \u2014 pick as many as you\u2019d like")
+              ),
+              el("div",{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}},
+                (function(){
+                  var days=[]; var d=new Date();
+                  d.setDate(d.getDate()+7-(d.getDay()||7)+1);
+                  for(var i=0;i<10;i++){
+                    var label=(["Mon","Tue","Wed","Thu","Fri","Mon","Tue","Wed","Thu","Fri"])[i]+" "+(d.getMonth()+1)+"/"+(d.getDate());
+                    var k=label; var s2=fbScheduleDays.includes(k);
+                    days.push(el("button",{key:k,
+                      onClick:(function(kk,ss){return function(){setFbScheduleDays(function(p){return ss?p.filter(function(x){return x!==kk;}):p.concat([kk]);});};})(k,s2),
+                      style:{background:s2?"rgba(100,255,218,0.12)":"rgba(255,255,255,0.04)",
+                        border:"1px solid "+(s2?C.teal+"88":C.border),borderRadius:6,padding:"5px 10px",
+                        color:s2?C.teal:C.textSecondary,fontSize:11,fontWeight:s2?700:400,cursor:"pointer"}
+                    },s2?"\u2713 "+label:label));
+                    d.setDate(d.getDate()+1);
+                    if(d.getDay()===6)d.setDate(d.getDate()+2);
+                    else if(d.getDay()===0)d.setDate(d.getDate()+1);
+                  }
+                  return days;
+                })()
+              ),
+              el("div",{style:{display:"flex",gap:8}},
+                [{id:"am",label:"Morning"},{id:"pm",label:"Afternoon"},{id:"either",label:"Either works"}].map(function(t){
+                  var s3=fbScheduleTime===t.id;
+                  return el("button",{key:t.id,onClick:function(){setFbScheduleTime(s3?null:t.id);},
+                    style:{flex:1,background:s3?"rgba(100,255,218,0.12)":"rgba(255,255,255,0.04)",
+                      border:"1px solid "+(s3?C.teal+"88":C.border),borderRadius:6,padding:"7px 10px",
+                      color:s3?C.teal:C.textSecondary,fontSize:12,fontWeight:s3?700:400,cursor:"pointer",textAlign:"center"}
+                  },t.label);
+                })
+              )
+            ) : null
+          ),
+
+          el(Card,{style:{marginBottom:12,borderColor:C.border}},
+            el("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
+              el("div",{style:{background:C.blueBrand,color:"#fff",borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:11,flexShrink:0}},"2"),
+              el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:14}},"Do you have questions about your report?")
+            ),
+            el("div",{style:{display:"flex",flexWrap:"wrap",gap:7,marginBottom:10}},
+              [
+                {id:"why_sku",    label:"Why this license was chosen"},
+                {id:"july_price", label:"July 2026 price impact"},
+                {id:"annualvmtm", label:"Annual vs. month-to-month"},
+                {id:"ghost_seats",label:"Ghost seats & waste"},
+                {id:"offboard",   label:"Offboarding automation"},
+                {id:"copilot",    label:"Copilot & AI add-ons"},
+                {id:"security",   label:"Security features"},
+                {id:"maximize",   label:"Getting more from licenses I already have"},
+                {id:"ms_vs_alt",  label:"Microsoft built-in vs. a better-fit tool — how to decide"},
+                {id:"td_process", label:"Working with TrustDigital"},
+                {id:"savings",    label:"How savings were calculated"},
+              ].map(function(t){
+                var sel=fbTopics.includes(t.id);
+                return el("button",{key:t.id,
+                  onClick:function(){setFbTopics(function(prev){return sel?prev.filter(function(x){return x!==t.id;}):prev.concat([t.id]);});},
+                  style:{background:sel?"rgba(100,255,218,0.12)":"rgba(255,255,255,0.04)",
+                    border:"1px solid "+(sel?C.teal+"88":C.border),borderRadius:20,padding:"5px 12px",
+                    color:sel?C.teal:C.textSecondary,fontSize:12,fontWeight:sel?700:400,cursor:"pointer"}
+                },sel?"\u2713 "+t.label:t.label);
+              })
+            ),
+            el("div",{style:{position:"relative"}},
+              el("textarea",{
+                value:fbCustomQ,
+                onChange:function(e){
+                  setFbCustomQ(e.target.value);
+                  if(e.target.value.trim()&&!fbTopics.includes("custom"))
+                    setFbTopics(function(p){return p.concat(["custom"]);});
+                  if(!e.target.value.trim())
+                    setFbTopics(function(p){return p.filter(function(x){return x!=="custom";});});
+                },
+                placeholder:"Something else? Type it here \u2014 this automatically counts as a topic.",
+                rows:2,
+                style:{width:"100%",background:fbCustomQ.trim()?"rgba(100,255,218,0.07)":"rgba(255,255,255,0.04)",
+                  border:"1px solid "+(fbCustomQ.trim()?C.teal+"55":C.border),borderRadius:7,
+                  padding:"10px 12px",color:C.textPrimary,fontSize:13,resize:"vertical",
+                  outline:"none",boxSizing:"border-box",fontFamily:"inherit",lineHeight:1.5,transition:"all 0.2s"}
+              })
+            )
+          ),
+
+          el(Card,{style:{marginBottom:12,borderColor:C.border}},
+            el("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
+              el("div",{style:{background:C.purple,color:"#fff",borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:11,flexShrink:0}},"3"),
+              el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:14}},"Feedback on the tool itself?")
+            ),
+            el("p",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.6,margin:"0 0 10px"}},
+              "If something felt off, unclear, or just missing \u2014 we want to know. This tool is a work in progress and your experience shapes where it goes."
+            ),
+            el("textarea",{value:fbText,onChange:function(e){setFbText(e.target.value);},
+              placeholder:"Anything at all. Even a single sentence helps.",rows:3,
+              style:{width:"100%",background:"rgba(255,255,255,0.04)",border:"1px solid "+C.border,
+                borderRadius:7,padding:"10px 12px",color:C.textPrimary,fontSize:13,resize:"vertical",
+                outline:"none",boxSizing:"border-box",fontFamily:"inherit",lineHeight:1.5}
+            })
+          ),
+
+          el("button",{
+            disabled:fbSending||!fbContact||(fbTopics.length===0&&!fbCustomQ.trim()&&!fbText.trim()),
+            onClick:async function(){
+              if(fbSending) return;
+              setFbSending(true);
+              var payload={type:"feedback",email:contact.email,name:contact.name,company:contact.company,
+                topics:fbTopics,customQuestion:fbCustomQ,generalFeedback:fbText,
+                contactPreference:fbContact||"none",
+                schedulePreferences:{days:fbScheduleDays,time:fbScheduleTime},
+                submittedAt:new Date().toISOString()};
+              try{await fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),});}catch(e){}
+              setFbSending(false); setFbSent(true);
+            },
+            style:{width:"100%",
+              background:(fbTopics.length>0||fbCustomQ.trim()||fbText.trim()||fbContact)
+                ?"linear-gradient(135deg,"+C.tealDim+","+C.blue+")":"rgba(255,255,255,0.06)",
+              color:fbContact?C.bgDeep:C.textMuted,
+              border:"none",borderRadius:8,padding:"13px",fontWeight:800,fontSize:14,
+              cursor:(fbContact)?"pointer":"default",
+              transition:"all 0.2s"}
+          },fbSending?"Sending\u2026":"Send")
+        )
+      ) : null
+    );
+
+    return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}},
+      el(NavBar,null),
+      el(PriceAlertBar,null),
+      el("div",{style:{flex:1,maxWidth:1080,margin:"0 auto",padding:"28px 18px",width:"100%",boxSizing:"border-box"}},
+        el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 270px",gap:20,alignItems:"start"}},
+          mainContent,
+          el(TDSidebar,null)
+        )
+      ),
+      el(BottomCTABanner,{savings:con.totalSavings,skuName:dominantSku,reportText:reportText}),
+      el(Footer,null)
+    );
+  }
+
+  return el("div",{style:{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",color:C.textPrimary}},
+    el("div",{style:{textAlign:"center"}},
+      el("div",{style:{fontSize:38,marginBottom:12}},"⏳"),
+      el("div",{style:{color:C.textSecondary,marginBottom:14}},"Building your report..."),
+      el(Btn,{variant:"ghost",onClick:function(){setLoading(false);setStep(3);}},"Back")
+    )
+  );
+}
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+document.getElementById("loading").style.display="none";
+</script>
+</body>
+</html>
