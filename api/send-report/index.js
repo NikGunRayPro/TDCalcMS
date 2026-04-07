@@ -1,47 +1,119 @@
+const { app } = require('@azure/functions');
 const https = require('https');
 
 const SALES_EMAIL = 'Sales1@trustdi.com';
 
+// Sends one email via Resend API
 function sendEmail(apiKey, to, subject, html, fromName) {
-  const from = fromName
-    ? fromName + ' <Sales1@trustdi.com>'h
-    : 'TrustDigital <Sales1@trustdi.com>';
-  const data = JSON.stringify({ from, to: Array.isArray(to) ? to : [to], subject, html });
+    const from = fromName
+      ? `${fromName} <Sales1@trustdi.com>`
+          : 'TrustDigital <Sales1@trustdi.com>';
+
+  const data = JSON.stringify({
+        from,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html
+  });
+
   return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.resend.com',
-      path: '/emails',
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
-    };
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => resolve({ status: res.statusCode, body }));
-    });
-    req.on('error', reject);
-    req.write(data);
-    req.end();
+        const options = {
+                hostname: 'api.resend.com',
+                path: '/emails',
+                method: 'POST',
+                headers: {
+                          'Authorization': `Bearer ${apiKey}`,
+                          'Content-Type': 'application/json',
+                          'Content-Length': Buffer.byteLength(data)
+                }
+        };
+
+                         const req = https.request(options, (res) => {
+                                 let body = '';
+                                 res.on('data', chunk => body += chunk);
+                                 res.on('end', () => resolve({ status: res.statusCode, body }));
+                         });
+
+                         req.on('error', reject);
+        req.write(data);
+        req.end();
   });
 }
 
-module.exports = async function (context, req) {
-  if (req.method === 'OPTIONS') {
-    context.res = { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } };
-    return;
-  }
-  const payload = req.body;
-  const { contact, emailHTML } = payload || {};
-  if (!contact || !contact.email || !emailHTML) { context.res = { status: 400, body: JSON.stringify({ error: 'Missing required fields' }) }; return; }
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) { context.res = { status: 500, body: JSON.stringify({ error: 'Email service not configured' }) }; return; }
-  const company = contact.company || 'Your Company';
-  const name = contact.name || '';
-  try {
-    await sendEmail(apiKey, contact.email, 'Your Microsoft 365 Licensing Report — ' + company, emailHTML, 'TrustDigital');
-    await sendEmail(apiKey, SALES_EMAIL, 'New M365 Report — ' + company + ' (' + name + ')', emailHTML, 'TrustDigital Calculator');
-    context.res = { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ success: true }) };
-  } catch (err) {
-    context.res = { status: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ success: false, error: err.message }) };
-  }
-};
+app.http('send-report', {
+    methods: ['GET', 'POST'],
+    authLevel: 'anonymous',
+    route: 'send-report',
+    handler: async (request, context) => {
+          // Handle CORS preflight
+      if (request.method === 'OPTIONS') {
+              return {
+                        status: 204,
+                        headers: {
+                                    'Access-Control-Allow-Origin': '*',
+                                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                                    'Access-Control-Allow-Headers': 'Content-Type'
+                        }
+              };
+      }
+
+      let payload;
+          try {
+                  payload = await request.json();
+          } catch (e) {
+                  return {
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+                            body: JSON.stringify({ error: 'Invalid JSON body' })
+                  };
+          }
+
+      const { contact, emailHTML } = payload || {};
+
+      if (!contact || !contact.email || !emailHTML) {
+              return {
+                        status: 400,
+                        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+                        body: JSON.stringify({ error: 'Missing required fields' })
+              };
+      }
+
+      const apiKey = process.env.RESEND_API_KEY;
+          if (!apiKey) {
+                  return {
+                            status: 500,
+                            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+                            body: JSON.stringify({ error: 'Email service not configured' })
+                  };
+          }
+
+      const company = contact.company || 'Your Company';
+          const name    = contact.name    || '';
+
+      const customerSubject = `Your Microsoft 365 Licensing Report — ${company}`;
+          const salesSubject    = `New M365 Report — ${company} (${name})`;
+
+      try {
+              // Email 1: customer gets their full report
+            await sendEmail(apiKey, contact.email, customerSubject, emailHTML, 'TrustDigital');
+
+            // Email 2: Sales1 gets the same report with a sales-friendly subject
+            await sendEmail(apiKey, SALES_EMAIL, salesSubject, emailHTML, 'TrustDigital Calculator');
+
+            return {
+                      status: 200,
+                      headers: {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                      },
+                      body: JSON.stringify({ success: true })
+            };
+      } catch (err) {
+              return {
+                        status: 500,
+                        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+                        body: JSON.stringify({ success: false, error: err.message })
+              };
+      }
+    }
+});
