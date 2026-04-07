@@ -6,8 +6,8 @@ const SALES_EMAIL = 'Sales1@trustdi.com';
 // Sends one email via Resend API
 function sendEmail(apiKey, to, subject, html, fromName) {
   const from = fromName
-      ? `${fromName} <Sales1@trustdi.com>`
-          : 'TrustDigital <Sales1@trustdi.com>';
+      ? `${fromName} <noreply@trustdi.com>`
+          : 'TrustDigital <noreply@trustdi.com>';
 
             const data = JSON.stringify({
                 from,
