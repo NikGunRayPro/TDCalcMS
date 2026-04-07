@@ -4,8 +4,8 @@ const SALES_EMAIL = 'Sales1@trustdi.com';
 
 function sendEmail(apiKey, to, subject, html, fromName) {
   const from = fromName
-    ? fromName + ' <onboarding@resend.dev>'
-    : 'TrustDigital <onboarding@resend.dev>';
+    ? fromName + ' <Sales1@trustdi.com>'h
+    : 'TrustDigital <Sales1@trustdi.com>';
   const data = JSON.stringify({ from, to: Array.isArray(to) ? to : [to], subject, html });
   return new Promise((resolve, reject) => {
     const options = {
