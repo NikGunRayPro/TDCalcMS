@@ -1,15 +1,13 @@
 {
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/*.{css,js,png,jpg,svg,ico,woff,woff2}"]
+    "exclude": ["/assets/*", "/*.css", "/*.js", "/*.png", "/*.jpg", "/*.svg", "/*.ico", "/*.woff", "/*.woff2"]
   },
   "globalHeaders": {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
+    "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin"
   },
-  "mimeTypes": {
-    ".json": "application/json"
-  }
+  "mimeTypes": { ".json": "application/json" }
 }
