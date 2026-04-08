@@ -1107,6 +1107,7 @@ function App() {
   const [fbSending, setFbSending] = useState(false);
   const [expandedP, setExpandedP]= useState(null);
   const [showHR,    setShowHR]   = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [emailChk,  setEmailChk] = useState(false);
   const [subStep,   setSubStep]  = useState(0);
   const [animDir,   setAnimDir]  = useState('fwd');
@@ -1218,7 +1219,13 @@ function App() {
   };
 
   const reportText = useMemo(function(){return results?buildReportText(contact,profiles,results):"";}, [contact,profiles,results]);
-  const hrText     = useMemo(function(){return buildHRText(contact,profiles);}, [contact,profiles]);
+  const hrText          = useMemo(function(){return buildHRText(contact,profiles);}, [contact,profiles]);
+  const reportEmailHTML = useMemo(function(){
+    if(!results) return "";
+    var pr  = results.profiles;
+    var con = results.consolidated;
+    return buildEmailHTML(contact, pr, con, wantsHRForm, buildHRText(contact,profiles));
+  }, [contact, profiles, results, wantsHRForm]);
   const dominantSku = useMemo(function(){
     if(!results) return "";
     const counts = {bp:0,e3:0,e5:0};
@@ -2016,6 +2023,20 @@ function App() {
 
       activeTab==="hr" ? el("div",null,
         showHR ? el(HRModal,{template:hrText,onClose:function(){setShowHR(false);}}) : null,
+        showReport ? el("div",{style:{position:"fixed",inset:0,background:"rgba(5,15,30,0.93)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
+          el("div",{style:{background:C.bgCard,border:"1px solid "+C.border,borderRadius:14,maxWidth:720,width:"100%",maxHeight:"90vh",overflow:"hidden",display:"flex",flexDirection:"column"}},
+            el("div",{style:{padding:"13px 18px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between"}},
+              el("div",{style:{color:C.textPrimary,fontWeight:800,fontSize:14}},"Full Licensing Intelligence Report"),
+              el("button",{onClick:function(){setShowReport(false);},style:{background:"transparent",border:"none",color:C.textSecondary,fontSize:20,cursor:"pointer",lineHeight:1}},"x")
+            ),
+            el("div",{style:{flex:1,overflow:"hidden"}},
+              el("iframe",{srcDoc:reportEmailHTML,style:{width:"100%",height:"100%",minHeight:520,border:"none"},sandbox:"allow-same-origin"})
+            ),
+            el("div",{style:{padding:"10px 18px",borderTop:"1px solid "+C.border,display:"flex",gap:8,justifyContent:"flex-end"}},
+              el(Btn,{variant:"ghost",onClick:function(){setShowReport(false);}},"Close")
+            )
+          )
+        ) : null,
         el(Card,{style:{marginBottom:12,borderColor:C.teal+"33",background:"rgba(100,255,218,0.04)"}},
           el("div",{style:{display:"flex",alignItems:"center",gap:10}},
             el("div",{style:{fontSize:18,flexShrink:0}},"📧"),
@@ -2037,7 +2058,7 @@ function App() {
             el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:6}},"Full Licensing Intelligence Report"),
             el("p",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5,marginBottom:14}},"Group-by-group breakdown: license recommendations, payment structure analysis, and savings projections."),
             el("div",{style:{display:"flex",gap:8}},
-              el("button",{onClick:function(){setShowHR(true);},style:{flex:1,background:"transparent",color:C.teal,border:"1px solid "+C.teal,borderRadius:7,padding:"9px 14px",fontWeight:700,fontSize:11,cursor:"pointer"}},"Preview"),
+              el("button",{onClick:function(){setShowReport(true);},style:{flex:1,background:"transparent",color:C.teal,border:"1px solid "+C.teal,borderRadius:7,padding:"9px 14px",fontWeight:700,fontSize:11,cursor:"pointer"}},"Preview"),
               el(CopyButton,{text:reportText,label:"Copy (plain text)",style:{flex:2,border:"1px solid "+C.border,color:C.textSecondary,borderRadius:7,padding:"9px 14px",textAlign:"center",fontSize:11}})
             )
           ),
