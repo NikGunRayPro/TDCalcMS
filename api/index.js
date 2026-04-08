@@ -41,6 +41,11 @@ function sendEmail(apiKey, to, subject, html, fromName) {
       });
     });
 
+    // 30-second timeout to prevent hanging indefinitely
+    req.setTimeout(30000, () => {
+      req.destroy(new Error('Request timed out after 30s'));
+    });
+
     req.on('error', reject);
     req.write(data);
     req.end();
@@ -74,7 +79,7 @@ app.http('send-report', {
       };
     }
 
-    const { contact, emailHTML } = payload || {};
+    const { contact, emailHTML, wantsHRForm, hrTemplate } = payload || {};
 
     if (!contact || !contact.email || !emailHTML) {
       return {
@@ -98,10 +103,22 @@ app.http('send-report', {
 
     const customerSubject = 'Your Microsoft 365 Licensing Report — ' + company;
     const salesSubject    = 'New M365 Report — ' + company + ' (' + name + ')';
+    const hrSubject       = 'HR Data Request — ' + company;
 
     try {
+      // Email 1: customer gets their full licensing report
       await sendEmail(apiKey, contact.email, customerSubject, emailHTML, 'TrustDigital');
+
+      // Email 2: Sales1 gets the same report with a sales-friendly subject
       await sendEmail(apiKey, SALES_EMAIL, salesSubject, emailHTML, 'TrustDigital Calculator');
+
+      // Email 3 (optional): HR data request template sent to customer
+      if (wantsHRForm && hrTemplate) {
+        const hrHTML = '<html><body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px">'
+          + String(hrTemplate).replace(/\n/g, '<br>')
+          + '</body></html>';
+        await sendEmail(apiKey, contact.email, hrSubject, hrHTML, 'TrustDigital');
+      }
 
       return {
         status: 200,
