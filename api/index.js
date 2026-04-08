@@ -13,7 +13,8 @@ function sendEmail(apiKey, to, subject, html, fromName) {
     from,
     to: Array.isArray(to) ? to : [to],
     subject,
-    html
+    html,
+    reply_to: 'Sales1@trustdi.com'
   });
 
   return new Promise((resolve, reject) => {
