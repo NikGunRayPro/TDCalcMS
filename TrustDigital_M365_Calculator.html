@@ -2335,5 +2335,17 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(App));
 document.getElementById("loading").style.display="none";
 </script>
+<script>
+(function(){
+  function reportHeight(){
+    var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+    window.parent.postMessage({type:"td-calc-height",height:h},"*");
+  }
+  reportHeight();
+  window.addEventListener("resize", reportHeight);
+  var observer = new MutationObserver(reportHeight);
+  observer.observe(document.body,{childList:true,subtree:true,attributes:true,characterData:true});
+})();
+</script>
 </body>
 </html>
