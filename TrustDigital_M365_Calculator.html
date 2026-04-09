@@ -25,6 +25,7 @@ body{background:#0a0a0a}
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
 <script type="text/babel" data-presets="react">
 const { useState, useMemo, useEffect } = React;
+const inIframe = window.self !== window.top;
 
 const WEBHOOK_URL = "/api/send-report";
 const TD_LOGO_URL = "https://images.squarespace-cdn.com/content/661700cd3e692d096f5c84fd/39f1a84b-10d7-433e-8ca0-c3ddcf88bc39/Untitled+design+%289%29.png?content-type=image%2Fpng";
@@ -414,6 +415,7 @@ function CopyButton(props) {
   );
 }
 function NavBar() {
+  if(inIframe) return null;
   return el("nav",{style:{background:"#0D1E38",borderBottom:"1px solid #1E3A5A",padding:"0 20px",position:"sticky",top:0,zIndex:100}},
     el("div",{style:{maxWidth:1100,margin:"0 auto",display:"flex",alignItems:"center",height:54}},
       el("a",{href:"https://www.trustdigital.net/",target:"_blank",rel:"noreferrer",style:{textDecoration:"none",display:"flex",alignItems:"center"}},
@@ -441,9 +443,9 @@ function Footer() {
   );
 }
 function Wrap(props) {
-  return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
+  return el("div",{style:{background:C.bg,minHeight:inIframe?"auto":"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
     el(NavBar,null),
-    el("div",{style:{maxWidth:props.maxWidth||640,margin:"0 auto",padding:"32px 18px"}},props.children),
+    el("div",{style:{maxWidth:props.maxWidth||640,margin:"0 auto",padding:inIframe?"16px 18px":"32px 18px"}},props.children),
     el(Footer,null)
   );
 }
@@ -1235,9 +1237,9 @@ function App() {
 
   // ── STEP 0 ──
   if(step===0) {
-    return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
+    return el("div",{style:{background:C.bg,minHeight:inIframe?"auto":"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif"}},
       el(NavBar,null),
-      el("div",{style:{maxWidth:860,margin:"0 auto",padding:"52px 20px 56px"}},
+      el("div",{style:{maxWidth:860,margin:"0 auto",padding:inIframe?"24px 20px 28px":"52px 20px 56px"}},
         el("div",{style:{display:"flex",justifyContent:"center",marginBottom:22}},
           el("div",{style:{display:"inline-flex",alignItems:"center",gap:7,background:C.tealBg,border:"1px solid "+C.teal+"44",borderRadius:99,padding:"5px 14px",fontSize:10,color:C.teal,fontWeight:700,letterSpacing:"0.12em"}},
             el("span",{style:{width:6,height:6,borderRadius:"50%",background:C.teal,boxShadow:"0 0 8px "+C.teal,display:"inline-block"}}),"MICROSOFT LICENSING INTELLIGENCE"
@@ -1502,7 +1504,7 @@ function App() {
     var qLayout = function(content2, opts2) {
       var o = opts2 || {};
       var nextBtnEl = o.nextBtn || el(Btn,{variant:'teal',onClick:goNext2,style:{fontSize:14,padding:'11px 28px'}},o.nextLabel||'Continue \u2192');
-      return el('div',{style:{background:C.bg,minHeight:'100vh',color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:'flex',flexDirection:'column'}},
+      return el('div',{style:{background:C.bg,minHeight:inIframe?'auto':'100vh',color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:'flex',flexDirection:'column'}},
         el(NavBar,null),
         el('div',{style:{height:3,background:C.border}},
           el('div',{style:{height:'100%',width:pct2+'%',background:'linear-gradient(90deg,'+C.tealDim+','+C.teal+')',transition:'width .6s ease'}})
@@ -1511,10 +1513,10 @@ function App() {
           el('span',{style:{color:C.teal,fontSize:12,fontWeight:700}},pct2+'% complete'),
           el('span',{style:{color:C.textMuted,fontSize:11}},(profiles.length>1?'Group '+(profIdx+1)+' of '+profiles.length+' \u00b7 ':'')+p2.icon+' '+p2.name)
         ),
-        el('div',{style:{flex:1,maxWidth:700,margin:'0 auto',width:'100%',padding:'40px 24px 110px',display:'flex',flexDirection:'column',justifyContent:'center'}},
+        el('div',{style:{flex:1,maxWidth:700,margin:'0 auto',width:'100%',padding:inIframe?'24px 24px 16px':'40px 24px 110px',display:'flex',flexDirection:'column',justifyContent:inIframe?'flex-start':'center'}},
           el('div',{className:animCls2,key:animKey2},content2)
         ),
-        el('div',{style:{position:'fixed',bottom:0,left:0,right:0,background:C.bgDeep,borderTop:'1px solid '+C.border,padding:'12px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',zIndex:50}},
+        el('div',{style:{position:inIframe?'relative':'fixed',bottom:0,left:inIframe?'auto':0,right:inIframe?'auto':0,width:inIframe?'100%':'auto',background:C.bgDeep,borderTop:'1px solid '+C.border,padding:'12px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',zIndex:50,boxSizing:'border-box'}},
           el('button',{onClick:goBack2,style:{background:'transparent',border:'none',color:C.textMuted,fontSize:12,cursor:'pointer',padding:'6px 4px'}},'\u2190 Back'),
           el('div',{style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}},
             nextBtnEl,
@@ -2309,7 +2311,7 @@ function App() {
       ) : null
     );
 
-    return el("div",{style:{background:C.bg,minHeight:"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}},
+    return el("div",{style:{background:C.bg,minHeight:inIframe?"auto":"100vh",color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}},
       el(NavBar,null),
       el(PriceAlertBar,null),
       el("div",{style:{flex:1,maxWidth:1080,margin:"0 auto",padding:"28px 18px",width:"100%",boxSizing:"border-box"}},
@@ -2323,7 +2325,7 @@ function App() {
     );
   }
 
-  return el("div",{style:{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",color:C.textPrimary}},
+  return el("div",{style:{background:C.bg,minHeight:inIframe?"400px":"100vh",display:"flex",alignItems:"center",justifyContent:"center",color:C.textPrimary}},
     el("div",{style:{textAlign:"center"}},
       el("div",{style:{fontSize:38,marginBottom:12}},"⏳"),
       el("div",{style:{color:C.textSecondary,marginBottom:14}},"Building your report..."),
