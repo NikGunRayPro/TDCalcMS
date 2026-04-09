@@ -2052,7 +2052,7 @@ function App() {
             )
           )
         ),
-        el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}},
+        el("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":(wantsHRForm?"1fr 1fr":"1fr"),gap:12}},
           el(Card,{style:{borderColor:C.teal+"44"}},
             el("div",{style:{fontSize:20,marginBottom:8}},"📋"),
             el("div",{style:{color:C.teal,fontWeight:800,fontSize:14,marginBottom:6}},"Full Licensing Intelligence Report"),
@@ -2062,7 +2062,7 @@ function App() {
               el(CopyButton,{text:reportText,label:"Copy (plain text)",style:{flex:2,border:"1px solid "+C.border,color:C.textSecondary,borderRadius:7,padding:"9px 14px",textAlign:"center",fontSize:11}})
             )
           ),
-          el(Card,{style:{borderColor:C.blue+"44"}},
+          wantsHRForm ? el(Card,{style:{borderColor:C.blue+"44"}},
             el("div",{style:{fontSize:20,marginBottom:8}},"📊"),
             el("div",{style:{color:C.blue,fontWeight:800,fontSize:14,marginBottom:6}},"HR Data Confirmation Request"),
             el("p",{style:{color:C.textSecondary,fontSize:12,lineHeight:1.5,marginBottom:6}},"Pre-filled with your group estimates. Send to HR to confirm turnover rates, avg tenure, and offboarding process."),
@@ -2071,7 +2071,7 @@ function App() {
               el("button",{onClick:function(){setShowHR(true);},style:{flex:1,background:"transparent",color:C.blue,border:"1px solid "+C.blue,borderRadius:7,padding:"9px 14px",fontWeight:700,fontSize:11,cursor:"pointer"}},"Preview"),
               el(CopyButton,{text:hrText,label:"Copy",style:{flex:2,border:"1px solid "+C.teal,color:C.teal,borderRadius:7,padding:"9px 14px",textAlign:"center",fontSize:11}})
             )
-          )
+          ) : null
         )
       ) : null,
 
